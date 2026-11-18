@@ -6,7 +6,7 @@ Zeek detection scripts with an explicit publisher-selected loader, versioned rel
 
 | Module | Behavior | Tested engine |
 | --- | --- | --- |
-| [PKINIT/U2U](DETECTOR-GUIDE.md) | Successful PKINIT followed by linked, same-account, self-targeted Kerberos U2U ticket issuance | Zeek 9.0.0 |
+| [PKINIT/U2U](DETECTOR-GUIDE.md) | Successful PKINIT followed by linked, same-account, self-targeted Kerberos U2U ticket issuance | Zeek 9.0.0 and 9.0.1 |
 
 The detector identifies UnPAC-compatible ticket activity, not proof of NT-hash extraction. Its source is unchanged from the accepted Network_Detections version. The notice subject contains only `principal@realm`; the message describes the observed behavior.
 
@@ -14,7 +14,7 @@ The detector identifies UnPAC-compatible ticket activity, not proof of NT-hash e
 
 ## Install
 
-With Zeek 9.0.0 and its configured package manager:
+With Zeek 9.0 or later and its configured package manager:
 
 ```sh
 zkg install https://github.com/Pb-22/zeek-detections
@@ -22,7 +22,7 @@ zkg install https://github.com/Pb-22/zeek-detections
 
 Load installed packages from the normal site policy using `@load packages`, or load this package explicitly with `@load zeek-detections`. Use one route, not both. Apply changes through the sensor platform's supported deployment process. Downloading or installing the package does not establish that a running sensor is using it.
 
-The package currently declares the exact tested Zeek version, `9.0.0`. Its Kerberos parser bit mapping is significant; do not loosen that dependency without replay and parser checks. Related AS and TGS flows must reach the same worker. Ordinary five-tuple balancing does not guarantee that placement.
+The package declares `zeek >=9.0`. Zeek 9.0.0 and 9.0.1 pass the retained replay and package tests. Zeek 8 is excluded because it lacks the Kerberos event parameter used to identify the authenticating ticket. The minimum version permits newer releases to install; it does not certify untested parser behavior. See [compatibility evidence](COMPATIBILITY.md) before deploying on a newer engine. Related AS and TGS flows must reach the same worker. Ordinary five-tuple balancing does not guarantee that placement.
 
 ## Publisher selection and updates
 
@@ -41,7 +41,7 @@ Refresh checks for updates; upgrade installs them. Neither command schedules fut
 
 The retained matrix contains seven authentic lab captures, one derived partial-view positive with an expected visibility-related miss, and 31 constructed event regressions. The event fixture is test-only and lives outside `scripts/`; never load it on a sensor.
 
-Requirements for offline reproduction: Zeek 9.0.0 and Python 3.9 or later. From this repository, keep output in a new directory outside the checkout:
+Tested engines for offline reproduction: Zeek 9.0.0 and 9.0.1, with Python 3.9 or later. From this repository, keep output in a new directory outside the checkout:
 
 ```sh
 sha256sum --check SHA256SUMS
@@ -49,7 +49,7 @@ python3 -B -m unittest discover -s tests -v
 python3 -B replay.py --events --output ../zeek-detections-replay
 ```
 
-[validation.json](validation.json) contains count-only execution results bound to the exact script, runner, case manifest and event-fixture hashes. Tests also exercise the real package loader with PKINIT/U2U enabled and then disabled. Raw logs remain local. Captures retain controlled lab identities, public certificates and encrypted authentication material; they are evidence, not live credentials.
+[validation.json](validation.json) and [validation-9.0.1.json](validation-9.0.1.json) contain count-only execution results for their named engines, bound to the exact script, runner, case manifest and event-fixture hashes. CI runs the package tests and all 39 replay cases on both engines using immutable image digests. Tests also exercise the real package loader with PKINIT/U2U enabled and then disabled. Raw logs remain local. Captures retain controlled lab identities, public certificates and encrypted authentication material; they are evidence, not live credentials.
 
 ## Other detections
 

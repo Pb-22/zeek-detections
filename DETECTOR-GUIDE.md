@@ -14,23 +14,25 @@ Principal/realm comparisons are case-insensitive. Other KDC flags are not a fixe
 
 A TGT emits once within the retained origin/deduplication lifetime. Exact duplicate requests do not extend the pairing window. Distinct overlapping AS or TGS requests are not guessed into response pairs.
 
-## Zeek 9.0.0 parser compatibility
+## Zeek 9.0.0 and 9.0.1 parser compatibility
+
+Both versions pass the retained replay matrix. Zeek 8 lacks the four-argument `krb_ap_request` event used here; see [compatibility evidence](COMPATIBILITY.md) for tested versions and the minimum-version rationale.
 
 ### PKINIT preauthentication and certificate events
 
-Zeek 9.0.0's native Kerberos parser consumes PA-PK-AS-REQ / PA-PK-AS-REP (16 / 17) rather than simply retaining those entries in `KDC_Request/Response$pa_data`. A test that only searches those vectors can therefore miss genuine PKINIT. The parser emits certificate-file events **before** the enclosing AS event. This script loads `base/files/x509` and observes `file_over_new_connection` with source `KRB` or `KRB_TCP`, scoped by connection UID and direction. It consumes each observation at the corresponding AS event.
+The native Kerberos parser in Zeek 9.0.0 and 9.0.1 consumes PA-PK-AS-REQ / PA-PK-AS-REP (16 / 17) rather than simply retaining those entries in `KDC_Request/Response$pa_data`. A test that only searches those vectors can therefore miss genuine PKINIT. The parser emits certificate-file events **before** the enclosing AS event. This script loads `base/files/x509` and observes `file_over_new_connection` with source `KRB` or `KRB_TCP`, scoped by connection UID and direction. It consumes each observation at the corresponding AS event.
 
 A preauth-required KRB-ERROR advertising PKINIT support does **not** create certificate success. The password controls include advertised method 16 without qualifying as PKINIT. Presence of a public certificate/file is a native parser signal, not endpoint evidence or a private-key operation. The certificate-based gate is version-/parser-dependent and intentionally conservative; PKINIT forms that do not yield these certificate-file observations can be missed.
 
 ### The KDC-options bit-name mismatch
 
-RFC 4120's ENC-TKT-IN-SKEY wire mask is `0x00000008`. In Zeek **9.0.0**, `krb-protocol.pac` maps `0x8` into the record member named `renewable_ok`, and `0x4` into `enc_tkt_in_skey`. This is an implementation naming/mapping issue, not a change to the protocol's meaning. The detector therefore defaults to:
+RFC 4120's ENC-TKT-IN-SKEY wire mask is `0x00000008`. In Zeek **9.0.0 and 9.0.1**, `krb-protocol.pac` maps `0x8` into the record member named `renewable_ok`, and `0x4` into `enc_tkt_in_skey`. This is an implementation naming/mapping issue, not a change to the protocol's meaning. The detector therefore defaults to:
 
 ```zeek
 PKINIT_U2U::legacy_zeek9_kdc_bits = T
 ```
 
-With that setting it checks `opts$renewable_ok` to recognize wire `0x8`. **Do not change it merely because the field name looks wrong.** Set it to `F` only after verifying a corrected parser's actual wire-to-event mapping. No newer Zeek release is claimed compatible here without replay and parser inspection. The constructed `wrong-wire-bit` case deliberately sets the misleading `enc_tkt_in_skey` member while clearing the actual `0x8` member and must not alert.
+With that setting it checks `opts$renewable_ok` to recognize wire `0x8`. **Do not change it merely because the field name looks wrong.** Set it to `F` only after verifying a corrected parser's actual wire-to-event mapping. Releases beyond those tested require replay and parser inspection before deployment. The constructed `wrong-wire-bit` case deliberately sets the misleading `enc_tkt_in_skey` member while clearing the actual `0x8` member and must not alert.
 
 ### Ordering and response association
 
@@ -56,7 +58,7 @@ Run on a single worker, or guarantee that **all related Kerberos flows** for a t
 | `correlation_window` | `5min` | Origin retention / maximum PKINIT-to-TGS age; deduplication retention |
 | `response_window` | `30sec` | Request/response pairing and short-lived parser context |
 | `max_ticket_states` | `100000` | Admission cap on retained PKINIT TGT origins; not a global memory cap |
-| `legacy_zeek9_kdc_bits` | `T` | Use Zeek 9.0.0's observed wire-bit mapping |
+| `legacy_zeek9_kdc_bits` | `T` | Use the observed wire-bit mapping in Zeek 9.0.0 and 9.0.1 |
 
 Quarantine is separate from the timed tables. Quarantine state persists for the connection lifetime; long-lived ambiguous connections and other parser/pending tables still consume resources. This is not a complete adversarial memory-budget guarantee. Measure local traffic and tune state/worker capacity before deployment.
 
@@ -81,4 +83,4 @@ On a notice, correlate both UIDs, account/realm, certificate-authentication even
 - [Zeek v9.0.0 Kerberos analyzer](https://github.com/zeek/zeek/blob/v9.0.0/src/analyzer/protocol/krb/krb-analyzer.pac): event construction and additional-ticket exposure.
 - [Zeek v9.0.0 preauthentication handling](https://github.com/zeek/zeek/blob/v9.0.0/src/analyzer/protocol/krb/krb-padata.pac): PKINIT handling and file emission.
 
-The version-pinned implementation and the packaged replay evidence take precedence over assumptions based on record member names alone.
+The version-specific parser sources and packaged replay evidence take precedence over assumptions based on record member names alone.

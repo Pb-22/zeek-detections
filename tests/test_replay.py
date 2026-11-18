@@ -118,7 +118,8 @@ class RunnerTests(unittest.TestCase):
 class PackageIntegrityTests(unittest.TestCase):
     def test_exact_public_allowlist(self):
         expected = {'README.md', 'PACKET-GUIDE.md', 'DETECTOR-GUIDE.md', 'cases.json',
-                    'validation.json', 'SHA256SUMS', 'replay.py', 'tests/test_replay.py', 'tests/test_notice_sub.py',
+                    'validation.json', 'validation-9.0.1.json', 'COMPATIBILITY.md',
+                    'SHA256SUMS', 'replay.py', 'tests/test_replay.py', 'tests/test_notice_sub.py',
                     'scripts/pkinit-u2u.zeek', 'tests/fixtures/event-regressions.zeek',
                     'scripts/__load__.zeek', 'zkg.meta', 'LICENSE', 'CHANGELOG.md', 'PROVENANCE.md',
                     '.gitignore', '.github/workflows/package-validation.yml', 'tests/test_distribution.py'}
@@ -140,22 +141,25 @@ class PackageIntegrityTests(unittest.TestCase):
 
     def test_sanitized_execution_binds_current_inputs(self):
         import hashlib
-        validation = ROOT/'validation.json'
-        self.assertTrue(validation.exists(), 'Sanitized actual execution must exist')
-        receipt = json.loads(validation.read_text())
-        self.assertTrue(receipt['passed'])
-        self.assertEqual(len(receipt['cases']), 39)
-        for path, key in [('replay.py', 'runner_sha256'), ('cases.json', 'cases_manifest_sha256'),
-                          ('scripts/pkinit-u2u.zeek', 'detector_sha256'),
-                          ('tests/fixtures/event-regressions.zeek', 'event_fixture_sha256')]:
-            self.assertEqual(hashlib.sha256((ROOT/path).read_bytes()).hexdigest(), receipt[key])
-        for row in receipt['cases']:
-            self.assertTrue(row['passed'])
-            self.assertEqual(row['expected'], row['observed'])
-            self.assertEqual(row['expected'], row['notices'])
-        public = validation.read_text()
-        for forbidden in ['sensor_root', '/srv/', '/home/', '/mnt/', 'reporter_errors', 'tgt_sha256']:
-            self.assertNotIn(forbidden, public)
+        for name, version in [('validation.json', '9.0.0'), ('validation-9.0.1.json', '9.0.1')]:
+            with self.subTest(version=version):
+                validation = ROOT/name
+                self.assertTrue(validation.exists(), 'Sanitized actual execution must exist')
+                receipt = json.loads(validation.read_text())
+                self.assertEqual(receipt['zeek_version'], 'zeek version '+version)
+                self.assertTrue(receipt['passed'])
+                self.assertEqual(len(receipt['cases']), 39)
+                for path, key in [('replay.py', 'runner_sha256'), ('cases.json', 'cases_manifest_sha256'),
+                                  ('scripts/pkinit-u2u.zeek', 'detector_sha256'),
+                                  ('tests/fixtures/event-regressions.zeek', 'event_fixture_sha256')]:
+                    self.assertEqual(hashlib.sha256((ROOT/path).read_bytes()).hexdigest(), receipt[key])
+                for row in receipt['cases']:
+                    self.assertTrue(row['passed'])
+                    self.assertEqual(row['expected'], row['observed'])
+                    self.assertEqual(row['expected'], row['notices'])
+                public = validation.read_text()
+                for forbidden in ['sensor_root', '/srv/', '/home/', '/mnt/', 'reporter_errors', 'tgt_sha256']:
+                    self.assertNotIn(forbidden, public)
 
 
 if __name__ == '__main__': unittest.main()

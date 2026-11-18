@@ -17,7 +17,8 @@ class DistributionTests(unittest.TestCase):
         config = configparser.ConfigParser()
         config.read(ROOT/'zkg.meta')
         self.assertEqual(config['package']['script_dir'], 'scripts')
-        self.assertEqual(config['package']['depends'], 'zeek ==9.0.0')
+        self.assertEqual(config['package']['depends'], 'zeek >=9.0')
+        self.assertEqual(config['package']['version'], '1.0.1')
         loads = [line.strip() for line in (ROOT/'scripts/__load__.zeek').read_text().splitlines()
                  if line.strip().startswith('@load ')]
         self.assertEqual(loads, ['@load ./pkinit-u2u'])
