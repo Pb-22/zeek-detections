@@ -8,7 +8,6 @@
 module PKINIT_U2U;
 
 export {
-    redef enum Log::ID += { LOG };
     redef enum Notice::Type += { Self_Targeted_Ticket };
 
     ## Starts at the successful AS response, not the first preauth attempt.
@@ -20,20 +19,6 @@ export {
     ## Set F only for a parser whose corrected mapping has been verified.
     const legacy_zeek9_kdc_bits = T &redef;
 
-    type Info: record {
-        ts: time &log;
-        uid: string &log;
-        id: conn_id &log;
-        pkinit_uid: string &log;
-        pkinit_client: addr &log;
-        principal: string &log;
-        realm: string &log;
-        service: string &log;
-        tgt_sha256: string &log;
-        pkinit_age: interval &log;
-        outcome: string &log;
-    };
-    global log_pkinit_u2u: event(rec: Info);
 }
 
 type AS_Pending: record {
@@ -101,11 +86,6 @@ function local_tgt(ticket: KRB::Ticket, realm: string): bool
 function wire_u2u(opts: KRB::KDC_Options): bool
     {
     return legacy_zeek9_kdc_bits ? opts$renewable_ok : opts$enc_tkt_in_skey;
-    }
-
-event zeek_init() &priority=5
-    {
-    Log::create_stream(LOG, [$columns=Info, $ev=log_pkinit_u2u, $path="pkinit_u2u"]);
     }
 
 event krb_as_request(c: connection, msg: KRB::KDC_Request)
@@ -225,11 +205,6 @@ event krb_tgs_response(c: connection, msg: KRB::KDC_Response)
          to_lower(msg$ticket$service_name) != to_lower(t$service) )
         return;
     add emitted[t$tgt];
-    Log::write(LOG, Info($ts=network_time(), $uid=c$uid, $id=c$id,
-        $pkinit_uid=o$uid, $pkinit_client=o$source, $principal=msg$client_name,
-        $realm=msg$client_realm, $service=msg$ticket$service_name,
-        $tgt_sha256=t$tgt, $pkinit_age=network_time()-o$issued,
-        $outcome="self_targeted_u2u_ticket_issued"));
     NOTICE([$note=Self_Targeted_Ticket, $conn=c, $identifier=t$tgt,
         $suppress_for=correlation_window,
         $msg=fmt("PKINIT followed by linked self-targeted U2U ticket issuance for %s@%s",

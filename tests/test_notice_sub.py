@@ -1,4 +1,4 @@
-"""Actual offline Zeek output regression; requires Zeek 9.0.0."""
+"""Actual notice-only output regression; tested on Zeek 9.0.0 and 9.0.1."""
 import json
 import os
 from pathlib import Path
@@ -24,12 +24,12 @@ class NoticeAccountTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, '')
             self.assertEqual(result.stderr, '')
-            findings = [json.loads(line) for line in (work / 'pkinit_u2u.log').read_text().splitlines()]
+            self.assertFalse((work / 'pkinit_u2u.log').exists(),
+                             'The detector must use notice.log without a custom log')
             notices = [json.loads(line) for line in (work / 'notice.log').read_text().splitlines()
                        if json.loads(line).get('note') == 'PKINIT_U2U::Self_Targeted_Ticket']
-            self.assertEqual(len(findings), 1)
             self.assertEqual(len(notices), 1)
-            account = findings[0]['principal'] + '@' + findings[0]['realm']
+            account = 'pku-alice@IDNET.SUPERIMPORTANTBUSINESS.COM'
             self.assertEqual(notices[0]['sub'], account)
             self.assertEqual(notices[0]['msg'],
                              'PKINIT followed by linked self-targeted U2U ticket issuance for ' + account)

@@ -2,10 +2,10 @@
 
 ## Analytic contract
 
-`scripts/pkinit-u2u.zeek` emits `PKINIT_U2U::Self_Targeted_Ticket` and one `pkinit_u2u.log` record after the following observed chain:
+`scripts/pkinit-u2u.zeek` emits `PKINIT_U2U::Self_Targeted_Ticket` through the Notice framework after the following observed chain. Under the normal notice policy it is logged in `notice.log`; the detector creates no custom log stream.
 
 1. A certificate-bearing AS request and certificate-bearing AS response pair successfully, with consistent client/realm and a local-realm TGT.
-2. Within five minutes of that AS response, a TGS request authenticates with the **same ticket**. The ticket identity is a SHA-256 digest of normalized realm, normalized service, encryption type and encrypted ticket content, separated by NUL bytes. The detector stores/logs the digest, not the ticket ciphertext or a session key.
+2. Within five minutes of that AS response, a TGS request authenticates with the **same ticket**. The ticket identity is a SHA-256 digest of normalized realm, normalized service, encryption type and encrypted ticket content, separated by NUL bytes. The detector retains the digest for correlation and notice suppression, not the ticket ciphertext or a session key; it does not export a custom digest field.
 3. The request has wire ENC-TKT-IN-SKEY, exactly one additional ticket, and that ticket's identity equals the authenticating TGT and the earlier AS-issued TGT.
 4. The requested service is the AS client account itself, with a matching realm.
 5. Within 30 seconds, a TGS response has the matching client/realm and the requested ticket service/realm. Only then is issuance reported.
@@ -64,9 +64,9 @@ Quarantine is separate from the timed tables. Quarantine state persists for the 
 
 ## Output and triage
 
-`pkinit_u2u.log` includes event time, TGS UID/connection, PKINIT UID/source, principal, realm, service, ticket digest, PKINIT age and outcome `self_targeted_u2u_ticket_issued`. The notice's `sub` field contains only the account in `principal@realm` form. The digest is a continuity identifier, **not an NT hash**.
+Release 1.0.2 uses notice-only output and creates no `pkinit_u2u.log`. The notice type is `PKINIT_U2U::Self_Targeted_Ticket`; `msg` describes the observed behavior and `sub` contains only `principal@realm`. Standard notice logging retains the qualifying TGS connection UID and connection context. Notice fields and detection conditions are unchanged from 1.0.1. The removed custom record's separate PKINIT UID/source, service, ticket digest, age and outcome columns are not exported as additional notice fields. The internal ticket digest is a continuity identifier, **not an NT hash**.
 
-On a notice, correlate both UIDs, account/realm, certificate-authentication events, DC ticket events, certificate enrollment history, authorized client activity and endpoint evidence. Do not label a certificate owner malicious solely from this notice. Source addresses are context, not identity proof. The protocol chain may be produced by authorized assessment or other legitimate tooling.
+On a notice, pivot from the TGS UID and account/realm to Kerberos connection logs, certificate-authentication events, DC ticket events, certificate enrollment history, authorized client activity and endpoint evidence. Recover the earlier PKINIT exchange from those sources; its separate UID is no longer supplied in a custom record. Do not label a certificate owner malicious solely from this notice. Source addresses are context, not identity proof. The protocol chain may be produced by authorized assessment or other legitimate tooling.
 
 ## Limits and expected misses
 

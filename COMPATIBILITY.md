@@ -4,19 +4,19 @@
 
 The package requires `zeek >=9.0`. This permits installation on newer releases without pinning one patch version. The tested engines are Zeek 9.0.0 and 9.0.1; the dependency range is not a claim that every future parser has been validated.
 
-The detector, publisher loader, eight capture files, case manifest, replay runner and constructed event fixture retain their original bytes in release 1.0.1.
+Release 1.0.2 removes custom logging while preserving the detector's conditions, state handling and notice fields. The publisher loader, eight capture files and constructed event fixture remain byte-identical. The case manifest retains every case and expectation, with an updated detector digest; the replay runner now checks notice counts and the absence of the custom log.
 
 ## Tested engines
 
 | Zeek version | Result |
 | --- | --- |
-| 9.0.0 | All 39 replay cases and 20 package tests pass |
-| 9.0.1 | All 39 replay cases and 20 package tests pass |
+| 9.0.0 | All 39 replay cases and 21 package tests pass |
+| 9.0.1 | All 39 replay cases and 21 package tests pass |
 | 8.0.0 | Detector does not load: required `krb_ap_request` prototype is unavailable |
 | 8.0.11 | Detector does not load: required `krb_ap_request` prototype is unavailable |
 | 8.2.2 | Detector does not load: required `krb_ap_request` prototype is unavailable |
 
-Each successful replay contains seven authentic lab captures, one derived partial-view positive with an expected visibility-related miss, and 31 constructed event regressions. The positive capture produces one detection and one notice; the negative and partial-view controls remain silent. Package tests also verify the publisher loader's enabled and disabled behavior and the account-only notice subject.
+Each successful replay contains seven authentic lab captures, one derived partial-view positive with an expected visibility-related miss, and 31 constructed event regressions. The positive capture produces one notice and no custom log; the negative and partial-view controls remain silent. Every case verifies that `pkinit_u2u.log` is absent. Package tests also verify the publisher loader's enabled and disabled behavior and the account-only notice subject.
 
 Count-only execution receipts are [validation.json](validation.json) for 9.0.0 and [validation-9.0.1.json](validation-9.0.1.json) for 9.0.1. They bind the same detector, runner, case manifest and event fixture. The CI workflow pins the official images by digest and runs the complete package suite on both versions.
 

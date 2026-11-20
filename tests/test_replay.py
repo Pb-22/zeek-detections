@@ -31,7 +31,7 @@ class RunnerTests(unittest.TestCase):
         config = self.runner.load_package(ROOT)
         self.assertEqual(len(config['cases']), 8)
         self.assertEqual(len(config['event_cases']), 31)
-        self.assertEqual(config['detector_sha256'], '335d787262ae1681e3cfd3469062c80a1bc400551e682600fd9258586fb8144f')
+        self.assertEqual(config['detector_sha256'], '1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126')
         self.assertEqual(config['cases'][-1]['classification'], 'derived_partial_view_expected_false_negative')
 
     def test_detector_mutation_rejected(self):
@@ -65,13 +65,20 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(row['observed'], 0)
         self.assertEqual(row['notices'], 0)
 
-    def test_requires_exact_log_and_notice_counts(self):
-        (self.work/'pkinit_u2u.log').write_text('{}\n')
+    def test_requires_exact_notice_counts_without_custom_log(self):
         self.assertFalse(self.runner.read_result(self.work, 1, 0, '', '')['passed'])
         (self.work/'notice.log').write_text(json.dumps({'note':'PKINIT_U2U::Self_Targeted_Ticket'})+'\n')
         self.assertTrue(self.runner.read_result(self.work, 1, 0, '', '')['passed'])
-        with (self.work/'pkinit_u2u.log').open('a') as f: f.write('{}\n')
+        with (self.work/'notice.log').open('a') as f:
+            f.write(json.dumps({'note':'PKINIT_U2U::Self_Targeted_Ticket'})+'\n')
         self.assertFalse(self.runner.read_result(self.work, 1, 0, '', '')['passed'])
+
+    def test_custom_log_is_rejected_even_when_empty(self):
+        assert self.runner is not None
+        (self.work/'pkinit_u2u.log').write_text('')
+        row = self.runner.read_result(self.work, 0, 0, '', '')
+        self.assertFalse(row['passed'])
+        self.assertFalse(row['custom_log_absent'])
 
     def test_engine_stderr_stdout_reporter_error_and_nonzero_fail(self):
         for code,out,err in [(1,'',''),(0,'unexpected',''),(0,'','warning')]:
@@ -80,7 +87,7 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(self.runner.read_result(self.work,0,0,'','')['passed'])
 
     def test_corrupt_log_rejected(self):
-        (self.work/'pkinit_u2u.log').write_text('not-json\n')
+        (self.work/'notice.log').write_text('not-json\n')
         with self.assertRaises(ValueError): self.runner.read_result(self.work,0,0,'','')
 
     def test_zeek_argv_and_constructed_case_option(self):
@@ -147,6 +154,8 @@ class PackageIntegrityTests(unittest.TestCase):
                 self.assertTrue(validation.exists(), 'Sanitized actual execution must exist')
                 receipt = json.loads(validation.read_text())
                 self.assertEqual(receipt['zeek_version'], 'zeek version '+version)
+                self.assertEqual(receipt['schema_version'], 2)
+                self.assertEqual(receipt['output_contract'], 'notice-only')
                 self.assertTrue(receipt['passed'])
                 self.assertEqual(len(receipt['cases']), 39)
                 for path, key in [('replay.py', 'runner_sha256'), ('cases.json', 'cases_manifest_sha256'),
@@ -155,6 +164,7 @@ class PackageIntegrityTests(unittest.TestCase):
                     self.assertEqual(hashlib.sha256((ROOT/path).read_bytes()).hexdigest(), receipt[key])
                 for row in receipt['cases']:
                     self.assertTrue(row['passed'])
+                    self.assertTrue(row['custom_log_absent'])
                     self.assertEqual(row['expected'], row['observed'])
                     self.assertEqual(row['expected'], row['notices'])
                 public = validation.read_text()

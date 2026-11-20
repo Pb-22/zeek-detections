@@ -18,14 +18,14 @@ class DistributionTests(unittest.TestCase):
         config.read(ROOT/'zkg.meta')
         self.assertEqual(config['package']['script_dir'], 'scripts')
         self.assertEqual(config['package']['depends'], 'zeek >=9.0')
-        self.assertEqual(config['package']['version'], '1.0.1')
+        self.assertEqual(config['package']['version'], '1.0.2')
         loads = [line.strip() for line in (ROOT/'scripts/__load__.zeek').read_text().splitlines()
                  if line.strip().startswith('@load ')]
         self.assertEqual(loads, ['@load ./pkinit-u2u'])
         self.assertEqual({p.name for p in (ROOT/'scripts').iterdir()},
                          {'__load__.zeek', 'pkinit-u2u.zeek'})
         self.assertEqual(hashlib.sha256((ROOT/'scripts/pkinit-u2u.zeek').read_bytes()).hexdigest(),
-                         '335d787262ae1681e3cfd3469062c80a1bc400551e682600fd9258586fb8144f')
+                         '1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126')
         self.assertTrue((ROOT/'tests/fixtures/event-regressions.zeek').is_file())
         self.assertNotIn('regression_case', (ROOT/'scripts/__load__.zeek').read_text())
 
@@ -49,6 +49,7 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, '')
                 self.assertEqual(result.stderr, '')
+                self.assertFalse((output/'pkinit_u2u.log').exists())
                 path = output/'notice.log'
                 notices = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
                 self.assertEqual(sum(row.get('note') == 'PKINIT_U2U::Self_Targeted_Ticket'
@@ -65,7 +66,10 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads((output/'receipt.json').read_text())
             self.assertTrue(receipt['passed'])
+            self.assertEqual(receipt['schema_version'], 2)
+            self.assertEqual(receipt['output_contract'], 'notice-only')
             self.assertEqual(len(receipt['cases']), 39)
+            self.assertTrue(all(row['custom_log_absent'] for row in receipt['cases']))
 
 if __name__ == '__main__':
     unittest.main()

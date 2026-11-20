@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+- Removed the custom `pkinit_u2u.log` stream and record; output uses the existing Notice framework only.
+- Preserved all detection conditions, state handling, notice fields and publisher selection.
+- Updated replay receipt schema to 2: `observed` counts matching notices and every case requires `custom_log_absent`.
+- Regenerated both engine receipts and added a regression that rejects even an empty custom log.
+- Preserved all eight captures, 31 constructed event cases and their expected notice counts.
+
 ## 1.0.1
 
 - Replaced the exact Zeek 9.0.0 dependency with a Zeek 9.0 minimum.

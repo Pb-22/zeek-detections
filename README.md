@@ -8,7 +8,13 @@ Zeek detection scripts with an explicit publisher-selected loader, versioned rel
 | --- | --- | --- |
 | [PKINIT/U2U](DETECTOR-GUIDE.md) | Successful PKINIT followed by linked, same-account, self-targeted Kerberos U2U ticket issuance | Zeek 9.0.0 and 9.0.1 |
 
-The detector identifies UnPAC-compatible ticket activity, not proof of NT-hash extraction. Its source is unchanged from the accepted Network_Detections version. The notice subject contains only `principal@realm`; the message describes the observed behavior.
+The detector identifies UnPAC-compatible ticket activity, not proof of NT-hash extraction. Detection conditions are preserved from the accepted Network_Detections version; release 1.0.2 removes its custom log output. The notice subject contains only `principal@realm`; the message describes the observed behavior.
+
+## Notice-only output
+
+The detector emits `PKINIT_U2U::Self_Targeted_Ticket` through Zeek's existing Notice framework. Under the normal logging policy, it appears in `notice.log`. It creates no `pkinit_u2u.log` or other custom log stream. The notice includes the account in `sub`, the behavior in `msg`, and the qualifying TGS connection context. It does not export the former custom record's separate PKINIT connection UID, PKINIT source, service, ticket digest or elapsed-time fields.
+
+When `notice.log` is already forwarded to a SIEM, use its existing notice ingestion and sourcetype; the new notice type is a field value, not a new log format. Confirm the sensor's export and notice policies. Creating a notice does not automatically create a SIEM alert.
 
 [Detection logic and triage](DETECTOR-GUIDE.md) explain ticket linkage, response pairing, parser behavior, state retention and visibility boundaries. The [packet guide](PACKET-GUIDE.md) describes each capture. [Source provenance](PROVENANCE.md) records the migration.
 
@@ -49,7 +55,7 @@ python3 -B -m unittest discover -s tests -v
 python3 -B replay.py --events --output ../zeek-detections-replay
 ```
 
-[validation.json](validation.json) and [validation-9.0.1.json](validation-9.0.1.json) contain count-only execution results for their named engines, bound to the exact script, runner, case manifest and event-fixture hashes. CI runs the package tests and all 39 replay cases on both engines using immutable image digests. Tests also exercise the real package loader with PKINIT/U2U enabled and then disabled. Raw logs remain local. Captures retain controlled lab identities, public certificates and encrypted authentication material; they are evidence, not live credentials.
+[validation.json](validation.json) and [validation-9.0.1.json](validation-9.0.1.json) contain count-only execution results for their named engines, bound to the exact script, runner, case manifest and event-fixture hashes. Receipt schema 2 counts matching notices as `observed` and verifies `custom_log_absent` for every case. CI runs the package tests and all 39 replay cases on both engines using immutable image digests. Tests also exercise the real package loader with PKINIT/U2U enabled and then disabled. Raw logs remain local. Captures retain controlled lab identities, public certificates and encrypted authentication material; they are evidence, not live credentials.
 
 ## Other detections
 

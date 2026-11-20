@@ -57,15 +57,16 @@ def json_rows(path):
 
 def read_result(work, expected, exit_code, stdout, stderr):
     """Return counts, not identity-bearing Zeek records or environment paths."""
-    observed = len(json_rows(work / 'pkinit_u2u.log'))
+    custom_log_absent = not (work / 'pkinit_u2u.log').exists()
     notices = sum(row.get('note') == 'PKINIT_U2U::Self_Targeted_Ticket'
                   for row in json_rows(work / 'notice.log'))
     errors = sum(row.get('level') == 'ERROR' for row in json_rows(work / 'reporter.log'))
-    return {'expected': expected, 'observed': observed, 'notices': notices,
+    return {'expected': expected, 'observed': notices, 'notices': notices,
+            'custom_log_absent': custom_log_absent,
             'exit_code': exit_code, 'stdout_empty': not stdout, 'stderr_empty': not stderr,
             'reporter_error_count': errors,
             'passed': exit_code == 0 and not stdout and not stderr and errors == 0
-                      and observed == expected and notices == expected}
+                      and notices == expected and custom_log_absent}
 
 
 def run_case(root, config, case, output, zeek, constructed=False):
@@ -111,7 +112,7 @@ def main(argv=None):
             raise ValueError('Zeek returned no version')
         output.mkdir(parents=True, exist_ok=False)
         rows = [run_case(root, config, case, output, args.zeek, constructed) for case, constructed in jobs]
-        receipt = {'schema_version': 1, 'zeek_version': zeek_version,
+        receipt = {'schema_version': 2, 'output_contract': 'notice-only', 'zeek_version': zeek_version,
                    'detector_sha256': digest(package_path(root, config['detector'])),
                    'event_fixture_sha256': digest(package_path(root, config['event_fixture'])),
                    'cases_manifest_sha256': digest(root / 'cases.json'), 'runner_sha256': digest(Path(__file__).resolve()),
