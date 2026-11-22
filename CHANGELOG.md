@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- Added the four accepted Modbus register write rejection scripts with their exact source bytes.
+- Selected all four modules beside unchanged PKINIT/U2U in the publisher loader.
+- Added four compact constructed reader captures, explicit per notice expectations and a portable 15 case integration runner.
+- Verified standard Notice actions, zero suppression, native Modbus logs, disabled selections and PKINIT controls on Zeek 9.0.0 and 9.0.1.
+- Preserved the Zeek 9.0 minimum, historical tags and every PKINIT replay input and receipt.
+
 ## 1.0.2
 
 - Removed the custom `pkinit_u2u.log` stream and record; output uses the existing Notice framework only.

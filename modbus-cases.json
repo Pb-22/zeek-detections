@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "source_repository": "https://github.com/Pb-22/Network_Detections",
+  "source_commit": "894fc1ca71c0fed27cc7067799967a9cdbc6288d",
+  "loader": "scripts/__load__.zeek",
+  "loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+  "pkinit_script": "scripts/pkinit-u2u.zeek",
+  "pkinit_sha256": "1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126",
+  "modules": [
+    {
+      "reason": 1,
+      "name": "Illegal Function",
+      "notice_type": "ModbusWriteRejection::Register_Write_Illegal_Function",
+      "script": "scripts/modbus-write-illegal-function.zeek",
+      "sha256": "0de1f7dfc921292c1e90a75514cc6a58ade774d768ab7cf9b3143371253c2fbb",
+      "source_script": "modbus/write errors/zeek/write_rejections/Register_Write_Illegal_Function/modbus-write-illegal-function.zeek"
+    },
+    {
+      "reason": 2,
+      "name": "Illegal Data Address",
+      "notice_type": "ModbusWriteRejection::Register_Write_Illegal_Data_Address",
+      "script": "scripts/modbus-write-illegal-data-address.zeek",
+      "sha256": "6fbbf3254a46c3af160189a8f96720f71f247a177089a5f48816f82d9ac3e54a",
+      "source_script": "modbus/write errors/zeek/write_rejections/Register_Write_Illegal_Data_Address/modbus-write-illegal-data-address.zeek"
+    },
+    {
+      "reason": 3,
+      "name": "Illegal Data Value",
+      "notice_type": "ModbusWriteRejection::Register_Write_Illegal_Data_Value",
+      "script": "scripts/modbus-write-illegal-data-value.zeek",
+      "sha256": "ff343f54fd21192e380d08a7161ea989ca2c5e30cc8bdbae0055135846c92e5b",
+      "source_script": "modbus/write errors/zeek/write_rejections/Register_Write_Illegal_Data_Value/modbus-write-illegal-data-value.zeek"
+    },
+    {
+      "reason": 4,
+      "name": "Server Device Failure",
+      "notice_type": "ModbusWriteRejection::Register_Write_Server_Device_Failure",
+      "script": "scripts/modbus-write-server-device-failure.zeek",
+      "sha256": "8d35a1479a789cb9a5c37155c0a1d03b6bc7c8e36b33ac4d68ab4fbfb7ce5bf3",
+      "source_script": "modbus/write errors/zeek/write_rejections/Register_Write_Server_Device_Failure/modbus-write-server-device-failure.zeek"
+    }
+  ],
+  "captures": [
+    {
+      "pcap": "pcap/modbus/Register_Write_Illegal_Function__combined_positive_negative__expected_2_notices.pcap",
+      "sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "source_pcap": "modbus/write errors/pcap/Register_Write_Illegal_Function__combined_positive_negative__expected_2_notices.pcap",
+      "classification": "constructed_protocol_fixture"
+    },
+    {
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Address__combined_positive_negative__expected_2_notices.pcap",
+      "sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "source_pcap": "modbus/write errors/pcap/Register_Write_Illegal_Data_Address__combined_positive_negative__expected_2_notices.pcap",
+      "classification": "constructed_protocol_fixture"
+    },
+    {
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Value__combined_positive_negative__expected_2_notices.pcap",
+      "sha256": "e28dfdbc055959024df2f345a150b3a3b32a0bf613b1fea895e73ee5ab3f0424",
+      "source_pcap": "modbus/write errors/pcap/Register_Write_Illegal_Data_Value__combined_positive_negative__expected_2_notices.pcap",
+      "classification": "constructed_protocol_fixture"
+    },
+    {
+      "pcap": "pcap/modbus/Register_Write_Server_Device_Failure__combined_positive_negative__expected_2_notices.pcap",
+      "sha256": "e7311dade6da01a18ea3467deee290ab8363e82346bdb69ea187fbeae8590e98",
+      "source_pcap": "modbus/write errors/pcap/Register_Write_Server_Device_Failure__combined_positive_negative__expected_2_notices.pcap",
+      "classification": "constructed_protocol_fixture"
+    },
+    {
+      "pcap": "pcap/positive-pkinit-u2u.pcap",
+      "sha256": "d33751275e970bc21ce1b2fffde772496ff9f4f4bf3a501879683ca5aaf52f35",
+      "classification": "authentic_lab_capture"
+    },
+    {
+      "pcap": "pcap/negative-password-self-u2u.pcap",
+      "sha256": "59212935ac9b8657c23d8ab4d1d5116033cd73c8f322692dc39c5d6cae8d222d",
+      "classification": "authentic_lab_capture"
+    }
+  ],
+  "cases": [
+    {
+      "case": "standalone-1",
+      "selection": "standalone",
+      "script": "scripts/modbus-write-illegal-function.zeek",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Function__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "bundle-1",
+      "selection": "bundle",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Function__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 1,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "modbus-disabled-1",
+      "selection": "modbus-disabled",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Function__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "standalone-2",
+      "selection": "standalone",
+      "script": "scripts/modbus-write-illegal-data-address.zeek",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Address__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "bundle-2",
+      "selection": "bundle",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Address__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 1,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "modbus-disabled-2",
+      "selection": "modbus-disabled",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Address__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "standalone-3",
+      "selection": "standalone",
+      "script": "scripts/modbus-write-illegal-data-value.zeek",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Value__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "bundle-3",
+      "selection": "bundle",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Value__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "modbus-disabled-3",
+      "selection": "modbus-disabled",
+      "pcap": "pcap/modbus/Register_Write_Illegal_Data_Value__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "standalone-4",
+      "selection": "standalone",
+      "script": "scripts/modbus-write-server-device-failure.zeek",
+      "pcap": "pcap/modbus/Register_Write_Server_Device_Failure__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "bundle-4",
+      "selection": "bundle",
+      "pcap": "pcap/modbus/Register_Write_Server_Device_Failure__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "modbus-disabled-4",
+      "selection": "modbus-disabled",
+      "pcap": "pcap/modbus/Register_Write_Server_Device_Failure__combined_positive_negative__expected_2_notices.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "pkinit-positive",
+      "selection": "bundle",
+      "pcap": "pcap/positive-pkinit-u2u.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 1
+      }
+    },
+    {
+      "case": "pkinit-negative",
+      "selection": "bundle",
+      "pcap": "pcap/negative-password-self-u2u.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    },
+    {
+      "case": "pkinit-disabled",
+      "selection": "all-disabled",
+      "pcap": "pcap/positive-pkinit-u2u.pcap",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      }
+    }
+  ]
+}

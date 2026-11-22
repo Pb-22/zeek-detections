@@ -129,7 +129,15 @@ class PackageIntegrityTests(unittest.TestCase):
                     'SHA256SUMS', 'replay.py', 'tests/test_replay.py', 'tests/test_notice_sub.py',
                     'scripts/pkinit-u2u.zeek', 'tests/fixtures/event-regressions.zeek',
                     'scripts/__load__.zeek', 'zkg.meta', 'LICENSE', 'CHANGELOG.md', 'PROVENANCE.md',
-                    '.gitignore', '.github/workflows/package-validation.yml', 'tests/test_distribution.py'}
+                    '.gitignore', '.github/workflows/package-validation.yml', 'tests/test_distribution.py',
+                    'MODBUS-WRITE-REJECTIONS.md', 'modbus-cases.json', 'modbus_replay.py',
+                    'tests/test_modbus.py', 'modbus-validation-9.0.0.json', 'modbus-validation-9.0.1.json'}
+        for slug, name in [('illegal-function', 'Illegal_Function'),
+                           ('illegal-data-address', 'Illegal_Data_Address'),
+                           ('illegal-data-value', 'Illegal_Data_Value'),
+                           ('server-device-failure', 'Server_Device_Failure')]:
+            expected.add('scripts/modbus-write-' + slug + '.zeek')
+            expected.add('pcap/modbus/Register_Write_' + name + '__combined_positive_negative__expected_2_notices.pcap')
         config = json.loads((ROOT/'cases.json').read_text())
         expected.update(case['pcap'] for case in config['cases'])
         self.assertEqual({str(p.relative_to(ROOT)) for p in ROOT.rglob('*') if p.is_file() and '.git' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in {'zkg.test_command.stdout', 'zkg.test_command.stderr'}}, expected)

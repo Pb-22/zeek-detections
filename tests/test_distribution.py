@@ -18,12 +18,15 @@ class DistributionTests(unittest.TestCase):
         config.read(ROOT/'zkg.meta')
         self.assertEqual(config['package']['script_dir'], 'scripts')
         self.assertEqual(config['package']['depends'], 'zeek >=9.0')
-        self.assertEqual(config['package']['version'], '1.0.2')
+        self.assertEqual(config['package']['version'], '1.1.0')
         loads = [line.strip() for line in (ROOT/'scripts/__load__.zeek').read_text().splitlines()
                  if line.strip().startswith('@load ')]
-        self.assertEqual(loads, ['@load ./pkinit-u2u'])
+        modules = ['pkinit-u2u', 'modbus-write-illegal-function',
+                   'modbus-write-illegal-data-address', 'modbus-write-illegal-data-value',
+                   'modbus-write-server-device-failure']
+        self.assertEqual(loads, ['@load ./' + name for name in modules])
         self.assertEqual({p.name for p in (ROOT/'scripts').iterdir()},
-                         {'__load__.zeek', 'pkinit-u2u.zeek'})
+                         {'__load__.zeek'} | {name + '.zeek' for name in modules})
         self.assertEqual(hashlib.sha256((ROOT/'scripts/pkinit-u2u.zeek').read_bytes()).hexdigest(),
                          '1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126')
         self.assertTrue((ROOT/'tests/fixtures/event-regressions.zeek').is_file())

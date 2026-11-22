@@ -2,17 +2,20 @@
 
 Zeek detection scripts with an explicit publisher-selected loader, versioned releases, packet evidence and offline regression tests.
 
-## Enabled detection
+## Enabled detections
 
 | Module | Behavior | Tested engine |
 | --- | --- | --- |
 | [PKINIT/U2U](DETECTOR-GUIDE.md) | Successful PKINIT followed by linked, same-account, self-targeted Kerberos U2U ticket issuance | Zeek 9.0.0 and 9.0.1 |
+| [Modbus register write rejections](MODBUS-WRITE-REJECTIONS.md) | Four scripts report FC06 and FC16 exceptions: Illegal Function, Illegal Data Address, Illegal Data Value and Server Device Failure | Collection: Zeek 9.0.0 and 9.0.1 |
 
 The detector identifies UnPAC-compatible ticket activity, not proof of NT-hash extraction. Detection conditions are preserved from the accepted Network_Detections version; release 1.0.2 removes its custom log output. The notice subject contains only `principal@realm`; the message describes the observed behavior.
 
 ## Notice-only output
 
 The detector emits `PKINIT_U2U::Self_Targeted_Ticket` through Zeek's existing Notice framework. Under the normal logging policy, it appears in `notice.log`. It creates no `pkinit_u2u.log` or other custom log stream. The notice includes the account in `sub`, the behavior in `msg`, and the qualifying TGS connection context. It does not export the former custom record's separate PKINIT connection UID, PKINIT source, service, ticket digest or elapsed-time fields.
+
+The Modbus scripts emit the four `ModbusWriteRejection::Register_Write_*` notice types with standard connection context and response header fields. Their action is `Notice::ACTION_LOG`, with `0secs` suppression. Native Modbus logs remain enabled. The [Modbus guide](MODBUS-WRITE-REJECTIONS.md) gives the exact reason names, matching guards, fields and investigation steps.
 
 When `notice.log` is already forwarded to a SIEM, use its existing notice ingestion and sourcetype; the new notice type is a field value, not a new log format. Confirm the sensor's export and notice policies. Creating a notice does not automatically create a SIEM alert.
 
@@ -32,7 +35,7 @@ The package declares `zeek >=9.0`. Zeek 9.0.0 and 9.0.1 pass the retained replay
 
 ## Publisher selection and updates
 
-[scripts/__load__.zeek](scripts/__load__.zeek) is the publisher's enabled selection. Only modules loaded there are enabled by the collection. A script's presence in the repository does not enable it. The initial selection contains only PKINIT/U2U.
+[scripts/__load__.zeek](scripts/__load__.zeek) is the publisher's enabled selection. Only modules loaded there are enabled by the collection. Release 1.1.0 selects PKINIT/U2U and all four Modbus register write rejection scripts. The initial 1.0 series selected PKINIT/U2U alone. New detections join the collection through reviewed releases and explicit loader selection.
 
 To enable or disable a module for collection subscribers, change that loader, run acceptance, and publish a newer release tag. Subscribers following releases receive the revised selection when they upgrade and deploy. A pinned version or commit remains pinned. Loading individual scripts separately can bypass the collection selection; subscribers who want publisher-controlled selection should load the package, not additional copies of its modules.
 
@@ -53,9 +56,12 @@ Tested engines for offline reproduction: Zeek 9.0.0 and 9.0.1, with Python 3.9 o
 sha256sum --check SHA256SUMS
 python3 -B -m unittest discover -s tests -v
 python3 -B replay.py --events --output ../zeek-detections-replay
+python3 -B modbus_replay.py --output ../zeek-modbus-replay
 ```
 
 [validation.json](validation.json) and [validation-9.0.1.json](validation-9.0.1.json) contain count-only execution results for their named engines, bound to the exact script, runner, case manifest and event-fixture hashes. Receipt schema 2 counts matching notices as `observed` and verifies `custom_log_absent` for every case. CI runs the package tests and all 39 replay cases on both engines using immutable image digests. Tests also exercise the real package loader with PKINIT/U2U enabled and then disabled. Raw logs remain local. Captures retain controlled lab identities, public certificates and encrypted authentication material; they are evidence, not live credentials.
+
+The unchanged PKINIT inputs retain their release 1.0.2 receipts. The Modbus matrix adds 15 integration cases covering standalone scripts, all five selected modules, disabled Modbus selection and PKINIT controls. [Modbus receipts for 9.0.0](modbus-validation-9.0.0.json) and [9.0.1](modbus-validation-9.0.1.json) bind the current loader, source and capture data. The full suite runs both matrices. Original standalone Modbus acceptance on 8.0.11 and 9.0.1 is retained in source provenance; the installed collection keeps its Zeek 9.0 minimum.
 
 ## Other detections
 

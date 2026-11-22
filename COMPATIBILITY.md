@@ -4,14 +4,14 @@
 
 The package requires `zeek >=9.0`. This permits installation on newer releases without pinning one patch version. The tested engines are Zeek 9.0.0 and 9.0.1; the dependency range is not a claim that every future parser has been validated.
 
-Release 1.0.2 removes custom logging while preserving the detector's conditions, state handling and notice fields. The publisher loader, eight capture files and constructed event fixture remain byte-identical. The case manifest retains every case and expectation, with an updated detector digest; the replay runner now checks notice counts and the absence of the custom log.
+Release 1.0.2 removed custom logging while preserving the PKINIT detector's conditions, state handling, notice fields and then PKINIT only loader. Release 1.1.0 retains that detector, eight captures, constructed event fixture, case manifest, runner and historical receipts unchanged. It expands the loader to include four Modbus scripts.
 
 ## Tested engines
 
 | Zeek version | Result |
 | --- | --- |
-| 9.0.0 | All 39 replay cases and 21 package tests pass |
-| 9.0.1 | All 39 replay cases and 21 package tests pass |
+| 9.0.0 | All 39 PKINIT replay cases and 15 Modbus integration cases pass; full package suite and real zkg installation pass |
+| 9.0.1 | All 39 PKINIT replay cases and 15 Modbus integration cases pass; full package suite and real zkg installation pass |
 | 8.0.0 | Detector does not load: required `krb_ap_request` prototype is unavailable |
 | 8.0.11 | Detector does not load: required `krb_ap_request` prototype is unavailable |
 | 8.2.2 | Detector does not load: required `krb_ap_request` prototype is unavailable |
@@ -19,6 +19,8 @@ Release 1.0.2 removes custom logging while preserving the detector's conditions,
 Each successful replay contains seven authentic lab captures, one derived partial-view positive with an expected visibility-related miss, and 31 constructed event regressions. The positive capture produces one notice and no custom log; the negative and partial-view controls remain silent. Every case verifies that `pkinit_u2u.log` is absent. Package tests also verify the publisher loader's enabled and disabled behavior and the account-only notice subject.
 
 Count-only execution receipts are [validation.json](validation.json) for 9.0.0 and [validation-9.0.1.json](validation-9.0.1.json) for 9.0.1. They bind the same detector, runner, case manifest and event fixture. The CI workflow pins the official images by digest and runs the complete package suite on both versions.
+
+The Modbus scripts have existing standalone acceptance on 8.0.11 and 9.0.1. The collection keeps `zeek >=9.0` for the Kerberos dependency. Current Modbus integration receipts for [9.0.0](modbus-validation-9.0.0.json) and [9.0.1](modbus-validation-9.0.1.json) bind the expanded loader and exact scripts and captures. The four reader captures exercise standalone and collection counts, disabled Modbus selection, native protocol log parity and PKINIT enabled and disabled controls. Real zkg 3.2.0 installation checks dependencies and runs the declared package test command on both engines; the installed runtime contains the loader and five selected scripts.
 
 ## Why Zeek 8 is excluded
 

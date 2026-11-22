@@ -1,5 +1,7 @@
 # Packet guide
 
+The collection includes Kerberos lab evidence under `pcap/` and four compact constructed Modbus fixtures under `pcap/modbus/`. The Kerberos frame map below retains its original interpretation. The [Modbus guide](MODBUS-WRITE-REJECTIONS.md) gives standalone commands and exact counts for each capture with all five modules loaded. [modbus-cases.json](modbus-cases.json) binds their filenames, hashes and original source paths. The first two Modbus filenames share identical bytes and yield reason counts 2, 2, 1, 0; the other two yield 2, 2, 2, 2. Each individual script yields two notices on its own named capture. PKINIT yields zero on all four Modbus fixtures.
+
 Frame numbers are **one-based in each distributed PCAP**. The captures preserve timestamps and packet-record bytes. Successful issuance refers to a KDC response, not client-side extraction or application authorization.
 
 ## Case map

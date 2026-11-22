@@ -1,0 +1,470 @@
+{
+  "schema_version": 1,
+  "output_contract": "notice-only",
+  "zeek_version": "zeek version 9.0.1",
+  "source_commit": "894fc1ca71c0fed27cc7067799967a9cdbc6288d",
+  "loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+  "pkinit_sha256": "1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126",
+  "module_sha256": {
+    "scripts/modbus-write-illegal-function.zeek": "0de1f7dfc921292c1e90a75514cc6a58ade774d768ab7cf9b3143371253c2fbb",
+    "scripts/modbus-write-illegal-data-address.zeek": "6fbbf3254a46c3af160189a8f96720f71f247a177089a5f48816f82d9ac3e54a",
+    "scripts/modbus-write-illegal-data-value.zeek": "ff343f54fd21192e380d08a7161ea989ca2c5e30cc8bdbae0055135846c92e5b",
+    "scripts/modbus-write-server-device-failure.zeek": "8d35a1479a789cb9a5c37155c0a1d03b6bc7c8e36b33ac4d68ab4fbfb7ce5bf3"
+  },
+  "cases_manifest_sha256": "40194e5db634cdeae912e1d0fc8a672460fae6016b470fad607e9b5fefeca68c",
+  "runner_sha256": "45e54070264c3a4b7e9052db79c4f7c2b2d2cca1036e3debc45f64f1e64cb7cc",
+  "cases": [
+    {
+      "case": "standalone-1",
+      "selection": "standalone",
+      "pcap_sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "executed_loader_sha256": "0de1f7dfc921292c1e90a75514cc6a58ade774d768ab7cf9b3143371253c2fbb",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "bundle-1",
+      "selection": "bundle",
+      "pcap_sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "executed_loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 1,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 1,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "modbus-disabled-1",
+      "selection": "modbus-disabled",
+      "pcap_sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "executed_loader_sha256": "1f2a3c8cecb94e5e456e52e995a634ce3bb30c4c8b8f3dc753b19b4e4b6dc847",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "standalone-2",
+      "selection": "standalone",
+      "pcap_sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "executed_loader_sha256": "6fbbf3254a46c3af160189a8f96720f71f247a177089a5f48816f82d9ac3e54a",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "bundle-2",
+      "selection": "bundle",
+      "pcap_sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "executed_loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 1,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 1,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "modbus-disabled-2",
+      "selection": "modbus-disabled",
+      "pcap_sha256": "38857620ca818d114a06cc5e9699a7d12651d23c1635f15b991eb0315a09a749",
+      "executed_loader_sha256": "1f2a3c8cecb94e5e456e52e995a634ce3bb30c4c8b8f3dc753b19b4e4b6dc847",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "standalone-3",
+      "selection": "standalone",
+      "pcap_sha256": "e28dfdbc055959024df2f345a150b3a3b32a0bf613b1fea895e73ee5ab3f0424",
+      "executed_loader_sha256": "ff343f54fd21192e380d08a7161ea989ca2c5e30cc8bdbae0055135846c92e5b",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "bundle-3",
+      "selection": "bundle",
+      "pcap_sha256": "e28dfdbc055959024df2f345a150b3a3b32a0bf613b1fea895e73ee5ab3f0424",
+      "executed_loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "modbus-disabled-3",
+      "selection": "modbus-disabled",
+      "pcap_sha256": "e28dfdbc055959024df2f345a150b3a3b32a0bf613b1fea895e73ee5ab3f0424",
+      "executed_loader_sha256": "1f2a3c8cecb94e5e456e52e995a634ce3bb30c4c8b8f3dc753b19b4e4b6dc847",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "standalone-4",
+      "selection": "standalone",
+      "pcap_sha256": "e7311dade6da01a18ea3467deee290ab8363e82346bdb69ea187fbeae8590e98",
+      "executed_loader_sha256": "8d35a1479a789cb9a5c37155c0a1d03b6bc7c8e36b33ac4d68ab4fbfb7ce5bf3",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "bundle-4",
+      "selection": "bundle",
+      "pcap_sha256": "e7311dade6da01a18ea3467deee290ab8363e82346bdb69ea187fbeae8590e98",
+      "executed_loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 2,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 2,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 2,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "modbus-disabled-4",
+      "selection": "modbus-disabled",
+      "pcap_sha256": "e7311dade6da01a18ea3467deee290ab8363e82346bdb69ea187fbeae8590e98",
+      "executed_loader_sha256": "1f2a3c8cecb94e5e456e52e995a634ce3bb30c4c8b8f3dc753b19b4e4b6dc847",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "pkinit-positive",
+      "selection": "bundle",
+      "pcap_sha256": "d33751275e970bc21ce1b2fffde772496ff9f4f4bf3a501879683ca5aaf52f35",
+      "executed_loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 1
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 1
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "pkinit-negative",
+      "selection": "bundle",
+      "pcap_sha256": "59212935ac9b8657c23d8ab4d1d5116033cd73c8f322692dc39c5d6cae8d222d",
+      "executed_loader_sha256": "1be878a300324e48019e1e5725a71c25a66c337fe8f1bccacc195dca53e37e11",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    },
+    {
+      "case": "pkinit-disabled",
+      "selection": "all-disabled",
+      "pcap_sha256": "d33751275e970bc21ce1b2fffde772496ff9f4f4bf3a501879683ca5aaf52f35",
+      "executed_loader_sha256": "4a2d04018f026fdfa046c33d7209ecc2d8027b86a8ad61569ffc7e20425ecc22",
+      "expected": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "observed": {
+        "ModbusWriteRejection::Register_Write_Illegal_Function": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Address": 0,
+        "ModbusWriteRejection::Register_Write_Illegal_Data_Value": 0,
+        "ModbusWriteRejection::Register_Write_Server_Device_Failure": 0,
+        "PKINIT_U2U::Self_Targeted_Ticket": 0
+      },
+      "unexpected_notice_count": 0,
+      "notice_actions_log_only": true,
+      "zero_suppression": true,
+      "notice_fields_valid": true,
+      "custom_log_absent": true,
+      "exit_code": 0,
+      "stdout_empty": true,
+      "stderr_empty": true,
+      "reporter_error_count": 0,
+      "passed": true
+    }
+  ],
+  "native_modbus_logs_preserved": true,
+  "passed": true
+}
