@@ -1,0 +1,500 @@
+{
+  "schema_version": 1,
+  "path": "scripts/modbus-write-illegal-data-address.zeek",
+  "title": "Modbus register write rejected: Illegal Data Address",
+  "description": "Reports a parsed Modbus responder rejecting FC06 or FC16 with Illegal Data Address (02). The guard requires protocol ID zero, MBAP length three and raw exception function 0x86 or 0x90. Each matching response writes a standard notice with connection, transaction and unit context.",
+  "tags": [
+    "Modbus",
+    "FC06",
+    "FC16",
+    "Illegal Data Address",
+    "register writes",
+    "notice.log"
+  ],
+  "initialTopic": "exception-guard",
+  "topics": [
+    {
+      "id": "loads",
+      "title": "Load Modbus and Notice scripts",
+      "description": "@load imports the base Modbus analyzer scripts and the Notice framework. Modbus supplies parsed protocol events and ModbusHeaders. The Notice framework supplies Notice::Type, Notice::ACTION_LOG and the NOTICE call used below.",
+      "ranges": [
+        {
+          "code": "# OT-MODBUS-005: parsed register-write rejection, reason 02.\n@load base/protocols/modbus\n@load base/frameworks/notice"
+        }
+      ],
+      "links": [
+        [
+          "exception-event",
+          "Receive parsed Modbus events"
+        ],
+        [
+          "log-action",
+          "Use the framework log action"
+        ]
+      ]
+    },
+    {
+      "id": "namespace",
+      "title": "Scope exported identifiers",
+      "description": "module ModbusWriteRejection places subsequent declarations in this namespace. The exported notice member therefore has the fully qualified name ModbusWriteRejection::Register_Write_Illegal_Data_Address. Namespace qualification keeps the four rejection types distinct while their handlers share the same protocol event.",
+      "ranges": [
+        {
+          "code": "module ModbusWriteRejection;"
+        }
+      ],
+      "links": [
+        [
+          "notice-type",
+          "Declare the exported notice member"
+        ],
+        [
+          "notice-call",
+          "Use the member in a notice record"
+        ]
+      ]
+    },
+    {
+      "id": "notice-type",
+      "title": "Declare the notice type",
+      "description": "export exposes the enclosed declaration to other scripts. redef enum Notice::Type += extends the existing framework enumeration with Register_Write_Illegal_Data_Address. The later $note assignment selects this classification, which appears in the note field of notice.log.",
+      "ranges": [
+        {
+          "code": "export {\nredef enum Notice::Type += {\n## A responder rejected FC06 or FC16 with Illegal Data Address (02).\nRegister_Write_Illegal_Data_Address\n};\n}"
+        }
+      ],
+      "links": [
+        [
+          "notice-call",
+          "Classify the matching response"
+        ],
+        [
+          "log-action",
+          "Write through the Notice framework"
+        ]
+      ]
+    },
+    {
+      "id": "exception-event",
+      "title": "Handle a parsed responder exception",
+      "description": "event modbus_exception declares a handler with a connection c, a ModbusHeaders record named headers and an exception code of type count. Zeek supplies this event from its responder exception parser after TCP stream reassembly. The header and reason provide the inputs for this stateless check.",
+      "ranges": [
+        {
+          "code": "# The pinned native parser dispatches ModbusTCP_ExceptResponse only on\n# the responder branch. HeaderToVal preserves the raw exception FC.\n# Each parsed ADU raises its own event after TCP stream reassembly.\nevent modbus_exception(c: connection, headers: ModbusHeaders, code: count)\n{"
+        }
+      ],
+      "links": [
+        [
+          "exception-guard",
+          "Evaluate the response fields"
+        ],
+        [
+          "connection-context",
+          "Retain the event connection"
+        ]
+      ]
+    },
+    {
+      "id": "exception-guard",
+      "title": "Match the register write rejection",
+      "description": "The if expression joins the protocol ID, MBAP length, exception reason and function checks with &&. All conditions must hold. Parentheses group the two function alternatives joined by ||. A matching reply enters the NOTICE block; each parsed response receives its own evaluation.",
+      "ranges": [
+        {
+          "code": "if ( headers$pid == 0 && headers$len == 3 && code == 2 &&\n(headers$function_code == 0x86 || headers$function_code == 0x90) )"
+        }
+      ],
+      "links": [
+        [
+          "protocol-id",
+          "Require protocol ID zero"
+        ],
+        [
+          "exception-length",
+          "Require an exception length of three"
+        ],
+        [
+          "reason-code",
+          "Select the reported exception reason"
+        ],
+        [
+          "exception-functions",
+          "Select FC06 and FC16 responses"
+        ],
+        [
+          "notice-call",
+          "Construct the matching notice"
+        ]
+      ]
+    },
+    {
+      "id": "notice-call",
+      "title": "Construct the notice record",
+      "description": "NOTICE receives a record written with square brackets and named $field assignments. $note selects Register_Write_Illegal_Data_Address from the extended Notice::Type enumeration. The following fields attach connection context, formatted evidence and the chosen logging action.",
+      "ranges": [
+        {
+          "code": "{\nNOTICE([$note=Register_Write_Illegal_Data_Address,"
+        }
+      ],
+      "links": [
+        [
+          "notice-type",
+          "Resolve the notice classification"
+        ],
+        [
+          "connection-context",
+          "Attach the connection"
+        ],
+        [
+          "notice-message",
+          "Format the message"
+        ]
+      ]
+    },
+    {
+      "id": "connection-context",
+      "title": "Attach the connection context",
+      "description": "$conn=c passes the connection from the protocol event into Notice::Info. The framework derives the connection UID and originator/responder endpoint fields from this record. The Modbus unit identifier is supplied separately from headers$uid in the subject.",
+      "ranges": [
+        {
+          "code": "$conn=c,"
+        }
+      ],
+      "links": [
+        [
+          "transaction-fields",
+          "Read the Modbus transaction and unit fields"
+        ],
+        [
+          "exception-event",
+          "Receive the connection in the event"
+        ]
+      ]
+    },
+    {
+      "id": "notice-message",
+      "title": "Format the notice message",
+      "description": "fmt fills %02d with the base function obtained by subtracting 0x80 from the raw exception function. The width and leading zero display FC06 or FC16. $msg combines that function with the reported Illegal Data Address (02) reason.",
+      "ranges": [
+        {
+          "code": "$msg=fmt(\"Modbus responder rejected register write FC%02d with Illegal Data Address (02)\",\nheaders$function_code - 0x80),"
+        }
+      ],
+      "links": [
+        [
+          "function-normalization",
+          "Follow the base function through both formats"
+        ],
+        [
+          "subject-format",
+          "Read the structured subject template"
+        ]
+      ]
+    },
+    {
+      "id": "subject-format",
+      "title": "Define the subject fields",
+      "description": "$sub receives a formatted string with six %d placeholders. The literal labels name transaction_id, unit_id, function_code, exception_code, protocol_id and mbap_length. fmt fills them from the following arguments in the same order.",
+      "ranges": [
+        {
+          "code": "$sub=fmt(\"transaction_id=%d unit_id=%d function_code=%d exception_code=%d protocol_id=%d mbap_length=%d\","
+        }
+      ],
+      "links": [
+        [
+          "transaction-fields",
+          "Supply transaction and unit values"
+        ],
+        [
+          "exception-fields",
+          "Supply reason and framing values"
+        ]
+      ]
+    },
+    {
+      "id": "transaction-fields",
+      "title": "Supply transaction and unit values",
+      "description": "The $ operator reads fields from the headers record. headers$tid supplies the transaction ID and headers$uid supplies the Modbus unit ID. headers$function_code - 0x80 supplies the base register write function. These are the first three values inserted into $sub.",
+      "ranges": [
+        {
+          "code": "headers$tid, headers$uid, headers$function_code - 0x80,"
+        }
+      ],
+      "links": [
+        [
+          "connection-context",
+          "Keep unit and connection identifiers distinct"
+        ],
+        [
+          "function-normalization",
+          "Convert the function for display"
+        ]
+      ]
+    },
+    {
+      "id": "exception-fields",
+      "title": "Supply reason and framing values",
+      "description": "code, headers$pid and headers$len supply the last three %d values in $sub. They record the selected exception reason, protocol ID and declared MBAP length. Their displayed values follow directly from the same fields evaluated by the guard.",
+      "ranges": [
+        {
+          "code": "code, headers$pid, headers$len),"
+        }
+      ],
+      "links": [
+        [
+          "reason-code",
+          "Compare the reported reason"
+        ],
+        [
+          "exception-length",
+          "Compare the declared length"
+        ],
+        [
+          "protocol-id",
+          "Compare the protocol identifier"
+        ]
+      ]
+    },
+    {
+      "id": "log-action",
+      "title": "Select the standard log action",
+      "description": "set(Notice::ACTION_LOG) constructs an action set containing the Notice framework logging action. $actions assigns it to this notice. The framework writes the notice through standard notice.log using the active logging configuration.",
+      "ranges": [
+        {
+          "code": "$actions=set(Notice::ACTION_LOG),"
+        }
+      ],
+      "links": [
+        [
+          "loads",
+          "Import the Notice definitions"
+        ],
+        [
+          "repeat-policy",
+          "Apply the suppression interval"
+        ]
+      ]
+    },
+    {
+      "id": "repeat-policy",
+      "title": "Emit each matching application message",
+      "description": "$suppress_for=0secs sets the suppression interval to zero. Repeated matching application messages and reused transaction IDs can each produce notices. Zeek handles TCP retransmissions during stream reassembly. The final brackets, parenthesis and braces close the notice record, call, guard and event body.",
+      "ranges": [
+        {
+          "code": "$suppress_for=0secs]);\n}\n}"
+        }
+      ],
+      "links": [
+        [
+          "exception-event",
+          "Receive the next parsed response"
+        ],
+        [
+          "exception-guard",
+          "Evaluate each response independently"
+        ]
+      ]
+    },
+    {
+      "id": "protocol-id",
+      "title": "Require protocol ID zero",
+      "description": "headers$pid == 0 compares the MBAP protocol identifier with the Modbus value zero. == is an equality comparison. Its Boolean result forms one term of the && expression and the selected identifier is also written into $sub.",
+      "ranges": [
+        {
+          "code": "if ( headers$pid == 0 && headers$len == 3 && code == 2 &&"
+        }
+      ],
+      "links": [
+        [
+          "exception-guard",
+          "Combine the Boolean conditions"
+        ],
+        [
+          "exception-fields",
+          "Record the selected identifier"
+        ]
+      ],
+      "concept": true
+    },
+    {
+      "id": "exception-length",
+      "title": "Require MBAP length three",
+      "description": "headers$len == 3 requires a unit identifier, exception function and exception code, one byte each. MBAP length counts these bytes after the six-byte transaction, protocol and length prefix. The explicit comparison fixes the accepted exception framing at this size.",
+      "ranges": [
+        {
+          "code": "if ( headers$pid == 0 && headers$len == 3 && code == 2 &&"
+        }
+      ],
+      "links": [
+        [
+          "exception-guard",
+          "Combine length with the other fields"
+        ],
+        [
+          "exception-fields",
+          "Record the declared length"
+        ]
+      ],
+      "concept": true
+    },
+    {
+      "id": "reason-code",
+      "title": "Select Illegal Data Address (02)",
+      "description": "code == 2 selects the responder's Illegal Data Address exception report. code has type count and carries the parsed exception byte as a nonnegative integer. The same value becomes exception_code in $sub and determines this script's notice classification.",
+      "ranges": [
+        {
+          "code": "if ( headers$pid == 0 && headers$len == 3 && code == 2 &&"
+        }
+      ],
+      "links": [
+        [
+          "exception-guard",
+          "Require the complete response predicate"
+        ],
+        [
+          "notice-type",
+          "Name this exception classification"
+        ],
+        [
+          "exception-fields",
+          "Record the reported code"
+        ]
+      ],
+      "concept": true
+    },
+    {
+      "id": "exception-functions",
+      "title": "Select register write exception functions",
+      "description": "0x86 selects the exception response for FC06, Write Single Register. 0x90 selects the response for FC16, Write Multiple Registers. || accepts either alternative. FC16 is decimal 16 with base function 0x10; the raw exception functions include the 0x80 exception bit.",
+      "ranges": [
+        {
+          "code": "(headers$function_code == 0x86 || headers$function_code == 0x90) )"
+        }
+      ],
+      "links": [
+        [
+          "exception-guard",
+          "Combine the function alternatives"
+        ],
+        [
+          "function-normalization",
+          "Display the base function"
+        ]
+      ],
+      "concept": true
+    },
+    {
+      "id": "function-normalization",
+      "title": "Convert exception functions for display",
+      "description": "The guard accepts raw exception functions 0x86 and 0x90. Subtracting 0x80 supplies the base function for both fmt calls. %02d formats it in $msg with two decimal digits; %d records the same function value in $sub.",
+      "ranges": [
+        {
+          "code": "(headers$function_code == 0x86 || headers$function_code == 0x90) )"
+        },
+        {
+          "code": "headers$function_code - 0x80),"
+        },
+        {
+          "code": "headers$tid, headers$uid, headers$function_code - 0x80,"
+        }
+      ],
+      "links": [
+        [
+          "exception-functions",
+          "Select the raw exception functions"
+        ],
+        [
+          "notice-message",
+          "Format the readable function"
+        ],
+        [
+          "transaction-fields",
+          "Record the numeric function"
+        ]
+      ],
+      "concept": true
+    }
+  ],
+  "notice": {
+    "msg": [
+      "Modbus responder rejected register write FC",
+      {
+        "token": "%02d",
+        "label": "Register write function",
+        "sources": [
+          {
+            "text": "headers$function_code - 0x80",
+            "anchor": "headers$function_code - 0x80),"
+          }
+        ]
+      },
+      " with Illegal Data Address (02)"
+    ],
+    "sub": [
+      "transaction_id=",
+      {
+        "token": "%d",
+        "label": "Transaction ID",
+        "sources": [
+          {
+            "text": "headers$tid",
+            "anchor": "headers$tid, headers$uid, headers$function_code - 0x80,"
+          }
+        ]
+      },
+      " unit_id=",
+      {
+        "token": "%d",
+        "label": "Modbus unit ID",
+        "sources": [
+          {
+            "text": "headers$uid",
+            "anchor": "headers$tid, headers$uid, headers$function_code - 0x80,"
+          }
+        ]
+      },
+      " function_code=",
+      {
+        "token": "%d",
+        "label": "Register write function",
+        "sources": [
+          {
+            "text": "headers$function_code - 0x80",
+            "anchor": "headers$tid, headers$uid, headers$function_code - 0x80,"
+          }
+        ]
+      },
+      " exception_code=",
+      {
+        "token": "%d",
+        "label": "Exception reason",
+        "sources": [
+          {
+            "text": "code",
+            "anchor": "code, headers$pid, headers$len),"
+          }
+        ]
+      },
+      " protocol_id=",
+      {
+        "token": "%d",
+        "label": "Protocol ID",
+        "sources": [
+          {
+            "text": "headers$pid",
+            "anchor": "code, headers$pid, headers$len),"
+          }
+        ]
+      },
+      " mbap_length=",
+      {
+        "token": "%d",
+        "label": "MBAP length",
+        "sources": [
+          {
+            "text": "headers$len",
+            "anchor": "code, headers$pid, headers$len),"
+          }
+        ]
+      }
+    ]
+  }
+}

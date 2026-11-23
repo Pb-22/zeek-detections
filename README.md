@@ -63,6 +63,12 @@ python3 -B modbus_replay.py --output ../zeek-modbus-replay
 
 The unchanged PKINIT inputs retain their release 1.0.2 receipts. The Modbus matrix adds 15 integration cases covering standalone scripts, all five selected modules, disabled Modbus selection and PKINIT controls. [Modbus receipts for 9.0.0](modbus-validation-9.0.0.json) and [9.0.1](modbus-validation-9.0.1.json) bind the current loader, source and capture data. The full suite runs both matrices. Original standalone Modbus acceptance on 8.0.11 and 9.0.1 is retained in source provenance; the installed collection keeps its Zeek 9.0 minimum.
 
+## Website notes
+
+[website-notes/](website-notes/README.md) supplies the interactive callouts on [zeek.brimerica.com](https://zeek.brimerica.com). The website fetches each script and its notes from the same commit and locates callouts by source text. Keep explanations and their source snippets together when updating a script. Notes edits use the normal Git push and website refresh, with independent package release numbering.
+
+The executable selection remains in scripts/__load__.zeek, and zkg installs runtime files from scripts/. Website notes are outside the runtime and package checksum inventory.
+
 ## Other detections
 
 Other Zeek scripts from Network_Detections are being considered individually. They are not included or enabled merely because this collection exists. Test fixtures are not detection modules.

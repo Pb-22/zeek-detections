@@ -1,0 +1,944 @@
+{
+  "schema_version": 1,
+  "path": "scripts/pkinit-u2u.zeek",
+  "title": "PKINIT followed by self-targeted U2U",
+  "description": "Correlates certificate-associated Kerberos AS issuance with a self-targeted U2U request using the same ticket fingerprint. A timely response matching the original account and requested service raises a notice. Related flows must reach the same Zeek worker.",
+  "tags": [
+    "Kerberos",
+    "PKINIT",
+    "U2U",
+    "identity",
+    "notice-only"
+  ],
+  "initialTopic": "as-reply",
+  "topics": [
+    {
+      "id": "loads",
+      "title": "Load Kerberos, Notice, and X.509 scripts",
+      "ranges": [
+        {
+          "code": "## Passive Windows AD PKINIT followed by linked self-targeted U2U issuance.\n## Zeek 9.0.0. No keys, decryption, endpoint logs, or asset inventory required.\n## Run on one worker, or ensure all related Kerberos flows reach the same worker.\n@load base/protocols/krb\n@load base/frameworks/notice\n@load base/files/x509"
+        }
+      ],
+      "description": "@load imports Kerberos analysis, the Notice framework, and X.509 file analysis. These scripts supply protocol events, notice output, and certificate observations used by later handlers. Lines beginning ## are documentation comments. Related Kerberos flows must reach the same Zeek worker so their observations share the correlation tables.",
+      "links": [
+        [
+          "certificates",
+          "Record Kerberos file observations before AS processing"
+        ],
+        [
+          "tables",
+          "Index worker-local tables and expire from creation"
+        ]
+      ]
+    },
+    {
+      "id": "module",
+      "title": "Give the exported notice a namespace",
+      "ranges": [
+        {
+          "code": "module PKINIT_U2U;\n\nexport {\nredef enum Notice::Type += { Self_Targeted_Ticket };"
+        }
+      ],
+      "description": "module PKINIT_U2U scopes subsequent identifiers to that namespace. Inside export, redef enum Notice::Type += adds Self_Targeted_Ticket to the framework's existing enumeration and exposes it to other scripts. The later NOTICE call uses this member to classify the finding and attach its connection and evidence.",
+      "links": [
+        [
+          "notice",
+          "Record emission and submit a typed framework notice"
+        ]
+      ]
+    },
+    {
+      "id": "settings",
+      "title": "Set correlation age, reply age, and origin capacity",
+      "ranges": [
+        {
+          "code": "## Starts at the successful AS response, not the first preauth attempt.\nconst correlation_window = 5min &redef;\nconst response_window = 30sec &redef;\nconst max_ticket_states: count = 100000 &redef;"
+        }
+      ],
+      "description": "const declares values that &redef allows site policy to override. The interval literals 5min and 30sec set the origin correlation window and pending response window. max_ticket_states uses count and defaults to 100000 origin entries. The correlation window starts at successful AS issuance; the response window bounds request-to-response pairing.",
+      "links": [
+        [
+          "tables",
+          "Index worker-local tables and expire from creation"
+        ],
+        [
+          "as-capacity",
+          "Require a ticket identity and available origin capacity"
+        ]
+      ]
+    },
+    {
+      "id": "parser-setting",
+      "title": "Select the Zeek 9 wire-bit mapping",
+      "ranges": [
+        {
+          "code": "## Zeek 9.0.0 krb-protocol.pac maps wire 0x8 to renewable_ok and\n## 0x4 to enc_tkt_in_skey. RFC 4120 assigns ENC-TKT-IN-SKEY to 0x8.\n## Set F only for a parser whose corrected mapping has been verified.\nconst legacy_zeek9_kdc_bits = T &redef;\n\n}"
+        }
+      ],
+      "description": "T is Zeek's Boolean true. legacy_zeek9_kdc_bits defaults to T for the documented Zeek 9.0.0 mapping of wire 0x8 to renewable_ok. RFC 4120 assigns that bit to ENC-TKT-IN-SKEY. Setting F selects enc_tkt_in_skey for a parser with a verified corrected mapping.",
+      "links": [
+        [
+          "u2u",
+          "Select the U2U flag through the compatibility branch"
+        ]
+      ]
+    },
+    {
+      "id": "as-type",
+      "title": "Model AS request identity and qualification",
+      "ranges": [
+        {
+          "code": "type AS_Pending: record {\nsignature: string;\nqualified: bool &default=F;\nclient: string;\nrealm: string;"
+        }
+      ],
+      "description": "AS_Pending is a record with named fields. signature, client, and realm hold strings; qualified holds a bool and defaults to F. The request handler sets qualified from certificate and field-presence checks. Tracking both ordinary and qualifying requests gives the overlap checks a common record for each connection.",
+      "links": [
+        [
+          "as-time",
+          "Retain AS timing, nonce, and ambiguity"
+        ],
+        [
+          "as-store",
+          "Construct pending AS state with optional fallbacks"
+        ]
+      ]
+    },
+    {
+      "id": "as-time",
+      "title": "Retain AS timing, nonce, and ambiguity",
+      "ranges": [
+        {
+          "code": "started: time;\nnonce: count;\nambiguous: bool &default=F;\n};",
+          "before": "client: string;\nrealm: string;"
+        }
+      ],
+      "description": "started has type time and records the request observation timestamp. nonce has type count and retains the request's nonnegative nonce. ambiguous defaults to F and becomes T when a distinct request overlaps. AS response pairing uses pending connection state, overlap status, response age, certificate observations, and account identity.",
+      "links": [
+        [
+          "as-overlap",
+          "Quarantine distinct outstanding AS requests"
+        ],
+        [
+          "as-guards",
+          "Require timely, same-account, certificate-linked TGT issuance"
+        ]
+      ]
+    },
+    {
+      "id": "origin-type",
+      "title": "Store account and issuance context for a ticket",
+      "ranges": [
+        {
+          "code": "type Origin: record {\nclient: string;\nrealm: string;\nissued: time;\nuid: string;\nsource: addr;\n};"
+        }
+      ],
+      "description": "Origin records a successful AS issuance: client and realm identify the account, issued stores its timestamp, uid stores the original connection identifier, and source stores an addr. The origins table indexes this record by ticket fingerprint, linking later requests to the retained ticket and its account context.",
+      "links": [
+        [
+          "as-origin",
+          "Retain the first successful issuance timestamp"
+        ],
+        [
+          "linkage",
+          "Link issued, authenticating, and additional tickets by fingerprint"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-type",
+      "title": "Model the target and authenticating ticket",
+      "ranges": [
+        {
+          "code": "type TGS_Pending: record {\nsignature: string;\nqualified: bool &default=F;\ntgt: string;\nservice: string;\nrealm: string;"
+        }
+      ],
+      "description": "TGS_Pending stores the request signature, authenticating TGT fingerprint, requested service, and realm. Each colon assigns a field's type. qualified defaults to F and changes to T after the request passes all candidate checks. Retaining the target separately lets the response handler compare the issued ticket's service and realm with the request.",
+      "links": [
+        [
+          "tgs-time",
+          "Retain TGS timing, nonce, and ambiguity"
+        ],
+        [
+          "tgs-store",
+          "Store TGS request state before candidate checks"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-time",
+      "title": "Retain TGS timing, nonce, and ambiguity",
+      "ranges": [
+        {
+          "code": "started: time;\nnonce: count;\nambiguous: bool &default=F;\n};",
+          "before": "service: string;\nrealm: string;"
+        }
+      ],
+      "description": "started stores the absolute request time for response-age comparisons. nonce retains the request's count value, and ambiguous defaults to F. The closing }; completes TGS_Pending. Request qualification requires nonce presence; response association uses the pending connection record, overlap status, timing, and account and ticket comparisons.",
+      "links": [
+        [
+          "tgs-overlap",
+          "Quarantine a distinct overlapping TGS request"
+        ],
+        [
+          "response-guards",
+          "Require fresh, qualified response state and emission eligibility"
+        ]
+      ]
+    },
+    {
+      "id": "tables",
+      "title": "Index worker-local tables and expire from creation",
+      "ranges": [
+        {
+          "code": "global as_pending: table[string] of AS_Pending &create_expire=response_window;\nglobal origins: table[string] of Origin &create_expire=correlation_window;\nglobal auth_ticket: table[string] of string &create_expire=response_window;\nglobal tgs_pending: table[string] of TGS_Pending &create_expire=response_window;"
+        }
+      ],
+      "description": "table[string] of AS_Pending maps a connection UID to a pending AS record. origins maps a ticket fingerprint to Origin; auth_ticket maps a UID to a fingerprint; tgs_pending maps a UID to TGS_Pending. &create_expire bases retention on insertion. Explicit age checks enforce the logical windows. Each worker holds its own tables.",
+      "links": [
+        [
+          "settings",
+          "Set correlation age, reply age, and origin capacity"
+        ],
+        [
+          "as-origin",
+          "Retain the first successful issuance timestamp"
+        ],
+        [
+          "tgs-store",
+          "Store TGS request state before candidate checks"
+        ]
+      ]
+    },
+    {
+      "id": "sets",
+      "title": "Track emission, certificate direction, and quarantine",
+      "ranges": [
+        {
+          "code": "global emitted: set[string] &create_expire=correlation_window;\nglobal pkinit_cert: set[string, bool] &create_expire=response_window;\n# Overlap destroys reply association. A reply, error, or timer cannot prove the\n# connection is drained, so quarantine lasts until connection removal.\nglobal quarantined: set[string];"
+        }
+      ],
+      "description": "emitted stores ticket-fingerprint membership. pkinit_cert uses set[string, bool] to distinguish originator and responder certificate observations for each UID. Their &create_expire attributes set retention from insertion. quarantined retains ambiguous UIDs until connection removal. Later handlers use add to insert membership, in to test it, and delete to remove it.",
+      "links": [
+        [
+          "certificates",
+          "Record Kerberos file observations before AS processing"
+        ],
+        [
+          "as-overlap",
+          "Quarantine distinct outstanding AS requests"
+        ],
+        [
+          "cleanup",
+          "Release quarantine when connection state is removed"
+        ]
+      ]
+    },
+    {
+      "id": "certificates",
+      "title": "Record Kerberos file observations before AS processing",
+      "ranges": [
+        {
+          "code": "# Zeek 9 consumes PA-PK-AS-REQ/REP (16/17) instead of copying them to\n# KDC_Request/Response$pa_data. Its native parser emits their certificate\n# files before the enclosing AS event. Error-advertised methods create no file.\nevent file_over_new_connection(f: fa_file, c: connection, is_orig: bool)\n{\nif ( f$source == \"KRB\" || f$source == \"KRB_TCP\" )\nadd pkinit_cert[c$uid, is_orig];\n}"
+        }
+      ],
+      "description": "file_over_new_connection receives typed fa_file, connection, and bool arguments. The || condition accepts f$source values \"KRB\" or \"KRB_TCP\". add pkinit_cert[c$uid, is_orig] records the UID and direction as a compound key. The documented parser order delivers these certificate file observations before the enclosing AS event.",
+      "links": [
+        [
+          "as-request",
+          "Consume the request-side certificate observation once"
+        ],
+        [
+          "as-reply",
+          "Consume the responder certificate and require pending state"
+        ]
+      ]
+    },
+    {
+      "id": "ticket-id",
+      "title": "Check ciphertext presence before fingerprinting",
+      "ranges": [
+        {
+          "code": "function ticket_id(ticket: KRB::Ticket): string\n{\nif ( ! ticket?$ciphertext || ticket$ciphertext == \"\" )\nreturn \"\";\n# Store a digest, never ciphertext or a credential/session key."
+        }
+      ],
+      "description": "ticket_id accepts a KRB::Ticket and returns a string. ?$ tests optional ciphertext presence before $ retrieves its value. Short-circuit || stops evaluation when the presence check fails. The function returns \"\" for absent or empty ciphertext, giving callers a sentinel they can check before storing a ticket identity.",
+      "links": [
+        [
+          "ticket-digest",
+          "Hash delimited ticket metadata and encrypted content"
+        ],
+        [
+          "as-capacity",
+          "Require a ticket identity and available origin capacity"
+        ]
+      ]
+    },
+    {
+      "id": "ticket-digest",
+      "title": "Hash delimited ticket metadata and encrypted content",
+      "ranges": [
+        {
+          "code": "return sha256_hash(cat(to_lower(ticket$realm), \"\\x00\",\nto_lower(ticket$service_name), \"\\x00\",\nfmt(\"%d\", ticket$cipher), \"\\x00\", ticket$ciphertext));\n}"
+        }
+      ],
+      "description": "cat joins the lowercased realm and service name, cipher number, and ciphertext with explicit NUL separators. fmt(\"%d\", ticket$cipher) converts the number to text. sha256_hash returns a digest of that combined value. The digest serves as the continuity key linking an issued TGT, an authenticating ticket, and an additional ticket.",
+      "links": [
+        [
+          "auth-ticket",
+          "Select the AP-REQ embedded in KDC preauthentication"
+        ],
+        [
+          "tgs-ticket-guards",
+          "Require U2U and exactly one matching additional ticket"
+        ],
+        [
+          "linkage",
+          "Link issued, authenticating, and additional tickets by fingerprint"
+        ]
+      ]
+    },
+    {
+      "id": "local-tgt",
+      "title": "Require the realm and local krbtgt service together",
+      "ranges": [
+        {
+          "code": "function local_tgt(ticket: KRB::Ticket, realm: string): bool\n{\nreturn to_lower(ticket$realm) == to_lower(realm) &&\nto_lower(ticket$service_name) == to_lower(cat(\"krbtgt/\", realm));\n}"
+        }
+      ],
+      "description": "local_tgt returns bool. && requires both the ticket realm and service comparisons to succeed. to_lower makes them case-insensitive; cat(\"krbtgt/\", realm) builds the expected local TGT service name. The AS response handler uses this predicate before retaining an origin for later ticket correlation.",
+      "links": [
+        [
+          "as-guards",
+          "Require timely, same-account, certificate-linked TGT issuance"
+        ]
+      ]
+    },
+    {
+      "id": "u2u",
+      "title": "Select the U2U flag through the compatibility branch",
+      "ranges": [
+        {
+          "code": "function wire_u2u(opts: KRB::KDC_Options): bool\n{\nreturn legacy_zeek9_kdc_bits ? opts$renewable_ok : opts$enc_tkt_in_skey;\n}"
+        }
+      ],
+      "description": "The ternary condition ? true_value : false_value selects a Boolean field. With legacy_zeek9_kdc_bits=T, wire_u2u reads opts$renewable_ok; F selects opts$enc_tkt_in_skey. The request handler first checks kdc_options presence, then combines this flag with ticket continuity, additional-ticket count, request identity, and self-target checks.",
+      "links": [
+        [
+          "parser-setting",
+          "Select the Zeek 9 wire-bit mapping"
+        ],
+        [
+          "tgs-ticket-guards",
+          "Require U2U and exactly one matching additional ticket"
+        ]
+      ]
+    },
+    {
+      "id": "as-request",
+      "title": "Consume the request-side certificate observation once",
+      "ranges": [
+        {
+          "code": "event krb_as_request(c: connection, msg: KRB::KDC_Request)\n{\nlocal certificate_seen = [c$uid, T] in pkinit_cert;\ndelete pkinit_cert[c$uid, T];\nif ( c$uid in quarantined )\nreturn;\nlocal signature = sha256_hash(fmt(\"%s/%s\", certificate_seen, msg));"
+        }
+      ],
+      "description": "krb_as_request receives a connection and KRB::KDC_Request. [c$uid, T] in pkinit_cert retrieves originator-side certificate membership, and delete consumes it for this request. A quarantined UID returns immediately. Otherwise sha256_hash combines the certificate status and formatted message into a signature used to detect distinct overlapping AS requests.",
+      "links": [
+        [
+          "as-overlap",
+          "Quarantine distinct outstanding AS requests"
+        ],
+        [
+          "as-store",
+          "Construct pending AS state with optional fallbacks"
+        ]
+      ]
+    },
+    {
+      "id": "as-overlap",
+      "title": "Quarantine distinct outstanding AS requests",
+      "ranges": [
+        {
+          "code": "if ( c$uid in as_pending )\n{\nif ( as_pending[c$uid]$signature != signature )\n{\nas_pending[c$uid]$ambiguous = T;\nadd quarantined[c$uid];\n}\nreturn;\n}"
+        }
+      ],
+      "description": "in tests whether the UID already has a pending AS record. A different signature, detected with !=, sets that record's $ambiguous field to T and adds the UID to quarantined. The outer branch returns for both duplicates and distinct overlaps, preserving the original pending record and its timestamp. Quarantine lasts until connection removal.",
+      "links": [
+        [
+          "sets",
+          "Track emission, certificate direction, and quarantine"
+        ],
+        [
+          "as-store",
+          "Construct pending AS state with optional fallbacks"
+        ],
+        [
+          "cleanup",
+          "Release quarantine when connection state is removed"
+        ]
+      ]
+    },
+    {
+      "id": "as-store",
+      "title": "Construct pending AS state with optional fallbacks",
+      "ranges": [
+        {
+          "code": "# Track non-PKINIT requests as well as qualified precursors.\nlocal a = AS_Pending($signature=signature,\n$client=msg?$client_name ? msg$client_name : \"\",\n$realm=msg?$service_realm ? msg$service_realm : \"\",\n$started=network_time(), $nonce=msg?$nonce ? msg$nonce : 0,\n$qualified=certificate_seen && msg?$client_name && msg?$service_realm && msg?$nonce);\nas_pending[c$uid] = a;\n}"
+        }
+      ],
+      "description": "AS_Pending($field=value, ...) constructs a typed record. ?$ tests each optional field before a ternary chooses its value or an empty-string or zero fallback. network_time() records the observation time. qualified requires a certificate signal and client name, service realm, and nonce presence. as_pending[c$uid] stores the record for this connection.",
+      "links": [
+        [
+          "as-type",
+          "Model AS request identity and qualification"
+        ],
+        [
+          "as-reply",
+          "Consume the responder certificate and require pending state"
+        ]
+      ]
+    },
+    {
+      "id": "as-reply",
+      "title": "Consume the responder certificate and require pending state",
+      "ranges": [
+        {
+          "code": "event krb_as_response(c: connection, msg: KRB::KDC_Response)\n{\nlocal certificate_seen = [c$uid, F] in pkinit_cert;\ndelete pkinit_cert[c$uid, F];\nif ( c$uid in quarantined || c$uid !in as_pending )\nreturn;"
+        }
+      ],
+      "description": "krb_as_response reads [c$uid, F] membership and immediately deletes that responder-side certificate observation. The || guard returns when the UID is quarantined or !in as_pending. Processing continues for a pending request on an eligible connection, carrying the consumed certificate status into the subsequent AS response checks.",
+      "links": [
+        [
+          "as-consume",
+          "Consume pending AS state before checking the reply"
+        ],
+        [
+          "as-guards",
+          "Require timely, same-account, certificate-linked TGT issuance"
+        ]
+      ]
+    },
+    {
+      "id": "as-consume",
+      "title": "Consume pending AS state before checking the reply",
+      "ranges": [
+        {
+          "code": "local a = as_pending[c$uid];\ndelete as_pending[c$uid];"
+        }
+      ],
+      "description": "local a retrieves the pending AS record after the membership guard. delete as_pending[c$uid] then consumes the association before response validation. Each accepted pending request supplies one response-processing attempt. A later response needs fresh request state to reach the same checks.",
+      "links": [
+        [
+          "as-guards",
+          "Require timely, same-account, certificate-linked TGT issuance"
+        ],
+        [
+          "as-overlap",
+          "Quarantine distinct outstanding AS requests"
+        ]
+      ]
+    },
+    {
+      "id": "as-guards",
+      "title": "Require timely, same-account, certificate-linked TGT issuance",
+      "ranges": [
+        {
+          "code": "if ( a$qualified == F || a$ambiguous || network_time()-a$started > response_window ||\ncertificate_seen == F || ! msg?$client_realm ||\nto_lower(a$client) != to_lower(msg$client_name) ||\nto_lower(a$realm) != to_lower(msg$client_realm) ||\n! local_tgt(msg$ticket, msg$client_realm) )\nreturn;"
+        }
+      ],
+      "description": "The || chain returns on any failed prerequisite. Continuing requires a qualified, unambiguous AS request, response age at most response_window, a responder certificate observation, a present client_realm, matching account and realm, and a local-realm TGT. to_lower makes identity comparisons case-insensitive, and the optional realm check precedes its value access.",
+      "links": [
+        [
+          "local-tgt",
+          "Require the realm and local krbtgt service together"
+        ],
+        [
+          "as-capacity",
+          "Require a ticket identity and available origin capacity"
+        ]
+      ]
+    },
+    {
+      "id": "as-capacity",
+      "title": "Require a ticket identity and available origin capacity",
+      "ranges": [
+        {
+          "code": "local key = ticket_id(msg$ticket);\nif ( key == \"\" || |origins| >= max_ticket_states )\nreturn;"
+        }
+      ],
+      "description": "ticket_id computes the ticket continuity key. Processing continues when the key is nonempty and |origins| is below max_ticket_states. Vertical bars count table entries; >= triggers the capacity return. This origin-table admission check occurs before the later key-membership test, including when the observed key already has an origin record.",
+      "links": [
+        [
+          "ticket-id",
+          "Check ciphertext presence before fingerprinting"
+        ],
+        [
+          "settings",
+          "Set correlation age, reply age, and origin capacity"
+        ],
+        [
+          "as-origin",
+          "Retain the first successful issuance timestamp"
+        ]
+      ]
+    },
+    {
+      "id": "as-origin",
+      "title": "Retain the first successful issuance timestamp",
+      "ranges": [
+        {
+          "code": "# Do not refresh the window on duplicate AS responses.\nif ( key !in origins )\norigins[key] = Origin($client=msg$client_name, $realm=msg$client_realm,\n$issued=network_time(), $uid=c$uid, $source=c$id$orig_h);\n}"
+        }
+      ],
+      "description": "key !in origins admits the first retained observation for a ticket fingerprint. Origin copies account, realm, UID, and originator address from the successful exchange. $issued=network_time() starts the correlation window. Repeated observations of a retained key preserve that timestamp; later requests use the same fingerprint to retrieve this origin.",
+      "links": [
+        [
+          "origin-type",
+          "Store account and issuance context for a ticket"
+        ],
+        [
+          "auth-ticket",
+          "Select the AP-REQ embedded in KDC preauthentication"
+        ]
+      ]
+    },
+    {
+      "id": "auth-ticket",
+      "title": "Select the AP-REQ embedded in KDC preauthentication",
+      "ranges": [
+        {
+          "code": "event krb_ap_request(c: connection, ticket: KRB::Ticket, opts: KRB::AP_Options, in_kdc_padata: bool)\n{\nif ( in_kdc_padata == F )\nreturn;\nlocal key = ticket_id(ticket);"
+        }
+      ],
+      "description": "krb_ap_request receives a Ticket, AP_Options, and an in_kdc_padata bool. The handler continues when in_kdc_padata is T, selecting an AP-REQ embedded in KDC preauthentication. ticket_id computes that authenticating ticket's fingerprint for the enclosing TGS request. The event signature explicitly carries the context needed to select this path.",
+      "links": [
+        [
+          "auth-cache",
+          "Cache the authenticating key for the enclosing request"
+        ],
+        [
+          "tgs-ticket-guards",
+          "Require U2U and exactly one matching additional ticket"
+        ]
+      ]
+    },
+    {
+      "id": "auth-cache",
+      "title": "Cache the authenticating key for the enclosing request",
+      "ranges": [
+        {
+          "code": "# The parser emits this before the enclosing TGS request. This is the\n# authenticating TGT, not the independently supplied additional ticket.\nif ( c$uid in auth_ticket && auth_ticket[c$uid] != key )\nauth_ticket[c$uid] = \"\";\nelse\nauth_ticket[c$uid] = key;\n}"
+        }
+      ],
+      "description": "The documented parser order emits this AP event before the enclosing TGS request. A different existing auth_ticket value causes the handler to store \"\"; the else branch stores the observed key. Each invocation follows this comparison anew. The UID-keyed string entry expires under response_window and is consumed by the TGS request handler.",
+      "links": [
+        [
+          "tgs-request",
+          "Consume the authenticating ticket and fingerprint the request"
+        ],
+        [
+          "tables",
+          "Index worker-local tables and expire from creation"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-request",
+      "title": "Consume the authenticating ticket and fingerprint the request",
+      "ranges": [
+        {
+          "code": "event krb_tgs_request(c: connection, msg: KRB::KDC_Request)\n{\nlocal key = c$uid in auth_ticket ? auth_ticket[c$uid] : \"\";\ndelete auth_ticket[c$uid];\nif ( c$uid in quarantined )\nreturn;\nlocal signature = sha256_hash(cat(key, fmt(\"%s\", msg)));"
+        }
+      ],
+      "description": "A membership test and ternary retrieve auth_ticket[c$uid], using \"\" as the fallback. delete consumes the cached value before the quarantine guard. For an eligible UID, sha256_hash combines the key and formatted request into an overlap signature. Later code records ordinary requests as well as candidates, then applies qualification checks.",
+      "links": [
+        [
+          "tgs-overlap",
+          "Quarantine a distinct overlapping TGS request"
+        ],
+        [
+          "tgs-store",
+          "Store TGS request state before candidate checks"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-overlap",
+      "title": "Quarantine a distinct overlapping TGS request",
+      "ranges": [
+        {
+          "code": "if ( c$uid in tgs_pending )\n{\nif ( tgs_pending[c$uid]$signature != signature )\n{\ntgs_pending[c$uid]$ambiguous = T;\nadd quarantined[c$uid];\n}\nreturn;\n}"
+        }
+      ],
+      "description": "An existing tgs_pending entry triggers overlap handling. If its signature differs, the handler sets $ambiguous=T and adds the UID to quarantined. Ordinary and candidate requests both participate. The branch returns for either a duplicate or distinct overlap, preserving the existing pending request for the response guard and eventual cleanup.",
+      "links": [
+        [
+          "sets",
+          "Track emission, certificate direction, and quarantine"
+        ],
+        [
+          "tgs-store",
+          "Store TGS request state before candidate checks"
+        ],
+        [
+          "cleanup",
+          "Release quarantine when connection state is removed"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-store",
+      "title": "Store TGS request state before candidate checks",
+      "ranges": [
+        {
+          "code": "# Track ordinary requests too. Otherwise an earlier ordinary reply could be\n# mistaken for a later candidate on a pipelined connection.\ntgs_pending[c$uid] = TGS_Pending($signature=signature, $tgt=key,\n$service=msg?$service_name ? msg$service_name : \"\",\n$realm=msg?$service_realm ? msg$service_realm : \"\",\n$started=network_time(), $nonce=msg?$nonce ? msg$nonce : 0);"
+        }
+      ],
+      "description": "The table assignment constructs TGS_Pending with its signature, authenticating key, requested service and realm, start time, and nonce. ?$ checks and ternary fallbacks supply empty strings or zero for absent optional fields. qualified keeps its F default at this point. Recording every request lets overlap handling account for ordinary requests interleaved with candidates.",
+      "links": [
+        [
+          "tgs-type",
+          "Model the target and authenticating ticket"
+        ],
+        [
+          "tgs-ticket-guards",
+          "Require U2U and exactly one matching additional ticket"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-ticket-guards",
+      "title": "Require U2U and exactly one matching additional ticket",
+      "ranges": [
+        {
+          "code": "if ( key == \"\" || key !in origins ||\n! msg?$kdc_options || ! wire_u2u(msg$kdc_options) ||\n! msg?$additional_tickets || |msg$additional_tickets| != 1 ||\n! msg?$service_name || ! msg?$service_realm || ! msg?$nonce ||\nticket_id(msg$additional_tickets[0]) != key )\nreturn;"
+        }
+      ],
+      "description": "The || chain allows processing to continue with a retained origin key, present kdc_options, a true wire U2U flag, exactly one additional ticket, and present service name, realm, and nonce. |msg$additional_tickets| checks vector length before [0] access. ticket_id(msg$additional_tickets[0]) must equal the authenticating key, linking both observed tickets.",
+      "links": [
+        [
+          "u2u",
+          "Select the U2U flag through the compatibility branch"
+        ],
+        [
+          "ticket-digest",
+          "Hash delimited ticket metadata and encrypted content"
+        ],
+        [
+          "tgs-self",
+          "Bound origin age and require the original account as target"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-self",
+      "title": "Bound origin age and require the original account as target",
+      "ranges": [
+        {
+          "code": "local o = origins[key];\nif ( network_time() < o$issued || network_time()-o$issued > correlation_window ||\nto_lower(msg$service_realm) != to_lower(o$realm) ||\nto_lower(msg$service_name) != to_lower(o$client) )\nreturn;"
+        }
+      ],
+      "description": "origins[key] retrieves the retained AS origin after membership has been checked. The request time must be at or after issuance and within correlation_window. to_lower comparisons require the requested service realm and service name to equal the origin's realm and client account. Passing these checks reaches the candidate qualification assignment.",
+      "links": [
+        [
+          "as-origin",
+          "Retain the first successful issuance timestamp"
+        ],
+        [
+          "tgs-qualified",
+          "Mark the request after all candidate checks pass"
+        ]
+      ]
+    },
+    {
+      "id": "tgs-qualified",
+      "title": "Mark the request after all candidate checks pass",
+      "ranges": [
+        {
+          "code": "tgs_pending[c$uid]$qualified = T;\n}"
+        }
+      ],
+      "description": "tgs_pending[c$uid]$qualified = T updates one field of the existing pending request. Reaching this assignment means the ticket, flag, identity, and origin-age guards passed. The response handler later consumes this marker and requires a timely matching response before recording emission and creating the notice.",
+      "links": [
+        [
+          "response-start",
+          "Require and consume the pending TGS association"
+        ],
+        [
+          "response-guards",
+          "Require fresh, qualified response state and emission eligibility"
+        ]
+      ]
+    },
+    {
+      "id": "response-start",
+      "title": "Require and consume the pending TGS association",
+      "ranges": [
+        {
+          "code": "event krb_tgs_response(c: connection, msg: KRB::KDC_Response)\n{\nif ( c$uid in quarantined || c$uid !in tgs_pending )\nreturn;\nlocal t = tgs_pending[c$uid];\ndelete tgs_pending[c$uid];"
+        }
+      ],
+      "description": "krb_tgs_response continues for an eligible UID with a pending TGS request; quarantined or missing-state UIDs return. local t retrieves the record, then delete tgs_pending[c$uid] consumes the association before further checks. Each pending entry supplies one response-processing attempt, following the same consumption pattern as AS responses.",
+      "links": [
+        [
+          "response-guards",
+          "Require fresh, qualified response state and emission eligibility"
+        ],
+        [
+          "tgs-overlap",
+          "Quarantine a distinct overlapping TGS request"
+        ]
+      ]
+    },
+    {
+      "id": "response-guards",
+      "title": "Require fresh, qualified response state and emission eligibility",
+      "ranges": [
+        {
+          "code": "if ( t$qualified == F || t$ambiguous || t$tgt !in origins || t$tgt in emitted ||\nnetwork_time() < t$started || network_time()-t$started > response_window ||\n! msg?$client_realm )\nreturn;"
+        }
+      ],
+      "description": "The || guard allows a qualified, unambiguous request with a retained origin and a ticket fingerprint eligible for its first emission. The response time must be at or after the request, its age at most response_window, and client_realm present. The emitted set tracks script-level duplicate status; the Notice framework applies additional output suppression.",
+      "links": [
+        [
+          "response-identity",
+          "Match the response account and issued service ticket"
+        ],
+        [
+          "sets",
+          "Track emission, certificate direction, and quarantine"
+        ]
+      ]
+    },
+    {
+      "id": "response-identity",
+      "title": "Match the response account and issued service ticket",
+      "ranges": [
+        {
+          "code": "local o = origins[t$tgt];\nif ( network_time()-o$issued > correlation_window ||\nto_lower(msg$client_name) != to_lower(o$client) ||\nto_lower(msg$client_realm) != to_lower(o$realm) ||\nto_lower(msg$ticket$realm) != to_lower(t$realm) ||\nto_lower(msg$ticket$service_name) != to_lower(t$service) )\nreturn;"
+        }
+      ],
+      "description": "origins[t$tgt] retrieves the retained AS account. The response must fall within correlation_window, name that account and realm, and carry a ticket whose realm and service match the pending target. Chained $ access reads fields inside the ticket. Passing every comparison reaches the linked self-targeted U2U issuance notice.",
+      "links": [
+        [
+          "notice",
+          "Record emission and submit a typed framework notice"
+        ],
+        [
+          "tgs-self",
+          "Bound origin age and require the original account as target"
+        ]
+      ]
+    },
+    {
+      "id": "notice",
+      "title": "Record emission and submit a typed framework notice",
+      "ranges": [
+        {
+          "code": "add emitted[t$tgt];\nNOTICE([$note=Self_Targeted_Ticket, $conn=c, $identifier=t$tgt,\n$suppress_for=correlation_window,"
+        }
+      ],
+      "description": "add emitted[t$tgt] records the ticket fingerprint before NOTICE is called. The bracketed record supplies $note=Self_Targeted_Ticket, $conn=c, the fingerprint identifier, and correlation_window as the suppression interval. $field=value initializes notice fields. The emitted set guards repeated findings during its retention; the framework also applies identifier-based suppression.",
+      "links": [
+        [
+          "notice-text",
+          "Format the account and realm in notice output"
+        ],
+        [
+          "response-identity",
+          "Match the response account and issued service ticket"
+        ]
+      ]
+    },
+    {
+      "id": "notice-text",
+      "title": "Format the account and realm in notice output",
+      "ranges": [
+        {
+          "code": "$msg=fmt(\"PKINIT followed by linked self-targeted U2U ticket issuance for %s@%s\",\nmsg$client_name, msg$client_realm),\n$sub=fmt(\"%s@%s\", msg$client_name, msg$client_realm)]);\n}"
+        }
+      ],
+      "description": "fmt fills %s placeholders with client name and realm from the accepted response. $msg reports linked self-targeted U2U ticket issuance, and $sub formats account@realm. The terminating ]); closes the notice record and call. Placeholder mappings bind these displayed values to the exact source expressions supplying them.",
+      "links": [
+        [
+          "response-identity",
+          "Match the response account and issued service ticket"
+        ],
+        [
+          "notice",
+          "Record emission and submit a typed framework notice"
+        ]
+      ]
+    },
+    {
+      "id": "error-start",
+      "title": "Clear AS pending state on Kerberos errors",
+      "ranges": [
+        {
+          "code": "event krb_error(c: connection, msg: KRB::Error_Msg)\n{\n# Advertised preauth methods in KRB-ERROR never establish PKINIT success.\ndelete as_pending[c$uid];"
+        }
+      ],
+      "description": "krb_error receives an observed KRB::Error_Msg. delete as_pending[c$uid] discards the pending AS association for that connection. A later AS response needs fresh request state to proceed. Retained successful origins and emitted fingerprints follow their own expiration lifetimes, keeping established ticket context separate from the failed exchange's pending state.",
+      "links": [
+        [
+          "error-rest",
+          "Clear request context and retain quarantine"
+        ],
+        [
+          "as-reply",
+          "Consume the responder certificate and require pending state"
+        ]
+      ]
+    },
+    {
+      "id": "error-rest",
+      "title": "Clear request context and retain quarantine",
+      "ranges": [
+        {
+          "code": "delete auth_ticket[c$uid];\ndelete tgs_pending[c$uid];\ndelete pkinit_cert[c$uid, T];\ndelete pkinit_cert[c$uid, F];\n}",
+          "before": "# Advertised preauth methods in KRB-ERROR never establish PKINIT success.\ndelete as_pending[c$uid];"
+        }
+      ],
+      "description": "The delete statements clear the UID's authenticating-ticket cache, pending TGS record, and both direction-specific certificate observations. Deleting an absent entry is harmless, so this cleanup covers partially observed exchanges. Quarantine persists across Kerberos errors and timer expiration; connection_state_remove is the handler that releases the UID's quarantine membership.",
+      "links": [
+        [
+          "cleanup",
+          "Release quarantine when connection state is removed"
+        ],
+        [
+          "sets",
+          "Track emission, certificate direction, and quarantine"
+        ]
+      ]
+    },
+    {
+      "id": "cleanup",
+      "title": "Release quarantine when connection state is removed",
+      "ranges": [
+        {
+          "code": "event connection_state_remove(c: connection)\n{\ndelete quarantined[c$uid];\ndelete as_pending[c$uid];\ndelete auth_ticket[c$uid];\ndelete tgs_pending[c$uid];"
+        }
+      ],
+      "description": "connection_state_remove runs when Zeek discards the connection state. The handler deletes the UID from quarantined and clears pending AS, authenticating-ticket, and pending TGS entries. Ticket-keyed origins retain their independent correlation-window expiration, allowing a later connection on the same worker to reference a still-retained ticket.",
+      "links": [
+        [
+          "cleanup-cert",
+          "Remove both directions of certificate context"
+        ],
+        [
+          "tables",
+          "Index worker-local tables and expire from creation"
+        ]
+      ]
+    },
+    {
+      "id": "cleanup-cert",
+      "title": "Remove both directions of certificate context",
+      "ranges": [
+        {
+          "code": "delete pkinit_cert[c$uid, T];\ndelete pkinit_cert[c$uid, F];\n}",
+          "before": "delete quarantined[c$uid];\ndelete as_pending[c$uid];\ndelete auth_ticket[c$uid];\ndelete tgs_pending[c$uid];"
+        }
+      ],
+      "description": "The final delete statements remove [c$uid, T] and [c$uid, F], covering originator and responder certificate observations when the connection ends. Each key contains both the UID string and direction bool. Connection cleanup removes any remaining observations, complementing the pkinit_cert set's response-window expiration.",
+      "links": [
+        [
+          "certificates",
+          "Record Kerberos file observations before AS processing"
+        ],
+        [
+          "sets",
+          "Track emission, certificate direction, and quarantine"
+        ]
+      ]
+    },
+    {
+      "id": "linkage",
+      "title": "Link issued, authenticating, and additional tickets by fingerprint",
+      "ranges": [
+        {
+          "code": "return sha256_hash(cat(to_lower(ticket$realm), \"\\x00\",\nto_lower(ticket$service_name), \"\\x00\",\nfmt(\"%d\", ticket$cipher), \"\\x00\", ticket$ciphertext));"
+        },
+        {
+          "code": "if ( in_kdc_padata == F )\nreturn;\nlocal key = ticket_id(ticket);"
+        },
+        {
+          "code": "if ( key == \"\" || key !in origins ||\n! msg?$kdc_options || ! wire_u2u(msg$kdc_options) ||\n! msg?$additional_tickets || |msg$additional_tickets| != 1 ||\n! msg?$service_name || ! msg?$service_realm || ! msg?$nonce ||\nticket_id(msg$additional_tickets[0]) != key )"
+        }
+      ],
+      "description": "The fingerprint helper hashes ticket metadata and ciphertext. The AP-REQ supplies the authenticating key, and the TGS request requires its single additional ticket to produce the same key. The retained AS origin links that key to successful certificate-associated issuance. The TGS response then confirms the original account and requested self-targeted service.",
+      "links": [
+        [
+          "ticket-digest",
+          "Hash delimited ticket metadata and encrypted content"
+        ],
+        [
+          "auth-ticket",
+          "Select the AP-REQ embedded in KDC preauthentication"
+        ],
+        [
+          "tgs-ticket-guards",
+          "Require U2U and exactly one matching additional ticket"
+        ]
+      ],
+      "concept": true
+    }
+  ],
+  "notice": {
+    "msg": [
+      "PKINIT followed by linked self-targeted U2U ticket issuance for ",
+      {
+        "token": "%s",
+        "label": "Client account",
+        "sources": [
+          {
+            "text": "msg$client_name",
+            "anchor": "to_lower(msg$client_name) != to_lower(o$client) ||"
+          },
+          {
+            "text": "msg$client_name",
+            "anchor": "msg$client_name, msg$client_realm),"
+          }
+        ]
+      },
+      "@",
+      {
+        "token": "%s",
+        "label": "Client realm",
+        "sources": [
+          {
+            "text": "msg$client_realm",
+            "anchor": "to_lower(msg$client_realm) != to_lower(o$realm) ||"
+          },
+          {
+            "text": "msg$client_realm",
+            "anchor": "msg$client_name, msg$client_realm),"
+          }
+        ]
+      }
+    ],
+    "sub": [
+      {
+        "token": "%s",
+        "label": "Client account",
+        "sources": [
+          {
+            "text": "msg$client_name",
+            "anchor": "$sub=fmt(\"%s@%s\", msg$client_name, msg$client_realm)]);"
+          }
+        ]
+      },
+      "@",
+      {
+        "token": "%s",
+        "label": "Client realm",
+        "sources": [
+          {
+            "text": "msg$client_realm",
+            "anchor": "$sub=fmt(\"%s@%s\", msg$client_name, msg$client_realm)]);"
+          }
+        ]
+      }
+    ]
+  }
+}

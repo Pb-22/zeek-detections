@@ -140,9 +140,9 @@ class PackageIntegrityTests(unittest.TestCase):
             expected.add('pcap/modbus/Register_Write_' + name + '__combined_positive_negative__expected_2_notices.pcap')
         config = json.loads((ROOT/'cases.json').read_text())
         expected.update(case['pcap'] for case in config['cases'])
-        self.assertEqual({str(p.relative_to(ROOT)) for p in ROOT.rglob('*') if p.is_file() and '.git' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in {'zkg.test_command.stdout', 'zkg.test_command.stderr'}}, expected)
+        self.assertEqual({str(p.relative_to(ROOT)) for p in ROOT.rglob('*') if p.is_file() and '.git' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).parts[0] != 'website-notes' and p.relative_to(ROOT).as_posix() not in {'zkg.test_command.stdout', 'zkg.test_command.stderr'}}, expected)
 
-    def test_manifest_binds_every_public_file(self):
+    def test_manifest_binds_runtime_package_files(self):
         import hashlib
         manifest = ROOT/'SHA256SUMS'
         self.assertTrue(manifest.exists(), 'SHA256SUMS must exist')
@@ -152,7 +152,7 @@ class PackageIntegrityTests(unittest.TestCase):
             self.assertNotIn(name, members)
             self.assertEqual(hashlib.sha256((ROOT/name).read_bytes()).hexdigest(), digest)
             members[name] = digest
-        self.assertEqual(set(members), {str(p.relative_to(ROOT)) for p in ROOT.rglob('*') if p.is_file() and '.git' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in {'zkg.test_command.stdout', 'zkg.test_command.stderr'} and p != manifest})
+        self.assertEqual(set(members), {str(p.relative_to(ROOT)) for p in ROOT.rglob('*') if p.is_file() and '.git' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).parts[0] != 'website-notes' and p.relative_to(ROOT).as_posix() not in {'zkg.test_command.stdout', 'zkg.test_command.stderr'} and p != manifest})
 
     def test_sanitized_execution_binds_current_inputs(self):
         import hashlib
