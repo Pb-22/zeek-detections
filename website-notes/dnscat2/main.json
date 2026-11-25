@@ -1,0 +1,1902 @@
+{
+  "schema_version": 1,
+  "path": "scripts/dnscat2/main.zeek",
+  "title": "dnscat2 DNS session pattern",
+  "description": "Correlates actual TXT, CNAME, MX, A and AAAA DNS answers with retained requests. Distinct paired negotiation keys, paired SYN and MSG stages, matching session IDs and generation guards qualify the pattern. Standalone processing is incremental; the optional finite adapter invokes the same lifecycle after a complete assigned input window.",
+  "tags": [
+    "DNS",
+    "dnscat2",
+    "session correlation",
+    "notice.log"
+  ],
+  "initialTopic": "notice-guard",
+  "topics": [
+    {
+      "id": "notice-type",
+      "title": "Load Notice and export the finding type",
+      "description": "@load imports the Notice framework. module DNScat2 scopes the declarations, and redef enum Notice::Type += exports CompatibleSession as DNScat2::CompatibleSession. The Notice call later selects this member.",
+      "ranges": [
+        {
+          "code": "@load base/frameworks/notice\nmodule DNScat2;\nexport {\nredef enum Notice::Type += { CompatibleSession };"
+        }
+      ],
+      "links": [
+        [
+          "notice-record",
+          "Construct the typed Notice"
+        ]
+      ]
+    },
+    {
+      "id": "capacity-settings",
+      "title": "Set the three state budgets",
+      "description": "These `&redef` constants set separate budgets for 1024 pending DNS transactions, 512 unanswered candidates and 256 sessions with matched reply evidence. Unanswered INITs consume the candidate budget. A matching negotiation reply promotes the same epoch into the session budget, preserving space for sessions that have progressed. Completed and closed sessions retain deduplication state within that session budget.",
+      "ranges": [
+        {
+          "code": "const max_pending = 1024 &redef;\nconst max_candidates = 512 &redef;\nconst max_sessions = 256 &redef;"
+        }
+      ],
+      "links": [
+        [
+          "pending-cap",
+          "Admit pending DNS within its budget"
+        ],
+        [
+          "candidate-cap",
+          "Bound unanswered candidates"
+        ],
+        [
+          "promotion-pressure",
+          "Reclaim completed session state at promotion"
+        ]
+      ]
+    },
+    {
+      "id": "lifetime-settings",
+      "title": "Set pending, candidate and session lifetimes",
+      "description": "pending_ttl and candidate_ttl default to 30sec. session_ttl defaults to 5min of session idle time. sweep_interval spaces cleanup opportunities by one second of lifecycle_time. &redef permits changing these lifetime settings.",
+      "ranges": [
+        {
+          "code": "const pending_ttl = 30sec &redef;\nconst candidate_ttl = 30sec &redef;\nconst session_ttl = 5min &redef;\nconst sweep_interval = 1sec &redef;"
+        }
+      ],
+      "links": [
+        [
+          "sweep",
+          "Apply the selected lifecycle clock during expiry"
+        ],
+        [
+          "reply-age",
+          "Fence replies by their retained lifetime"
+        ]
+      ]
+    },
+    {
+      "id": "decode-settings",
+      "title": "Bound name and frame work",
+      "description": "`max_boundaries` limits a question to eight leading hexadecimal label boundaries. `max_name_bytes` caps the name at 253 bytes, and `max_frame_bytes` caps decoded frames at 512 bytes. The guards bound name splitting, hexadecimal validation and byte conversion before the lifecycle receives a Frame.",
+      "ranges": [
+        {
+          "code": "const max_boundaries = 8 &redef;\nconst max_frame_bytes = 512 &redef;\nconst max_name_bytes = 253 &redef;"
+        }
+      ],
+      "links": [
+        [
+          "query-boundaries",
+          "Try bounded leading label splits"
+        ],
+        [
+          "hex-input",
+          "Validate hexadecimal input before conversion"
+        ]
+      ]
+    },
+    {
+      "id": "observation-scope",
+      "title": "Namespace the observed DNS view",
+      "description": "observation_scope defaults to local and is redefinable. It becomes the first component of the logical session context, allowing an operator to name the observation view represented by this module instance.",
+      "ranges": [
+        {
+          "code": "const observation_scope = \"local\" &redef;"
+        }
+      ],
+      "links": [
+        [
+          "logical-context",
+          "Build the logical session identity"
+        ]
+      ]
+    },
+    {
+      "id": "frame-metadata",
+      "title": "Represent decoded frame metadata",
+      "description": "`Frame` retains validity, kind, decoded length, SID, INIT key fingerprint and admitted suffix. `sha256_hash` reduces the public key to the fingerprint used by peer comparisons. The lifecycle receives this compact metadata while carrier reconstruction handles the encoded payload locally.",
+      "ranges": [
+        {
+          "code": "type Frame: record {\nvalid: bool &default=F;\nkind: count &default=255;\nlength: count &default=0;\nsid: string &default=\"\";\nkey_hash: string &default=\"\";\nsuffix: string &default=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "frame-valid",
+          "Mark the accepted envelope"
+        ],
+        [
+          "frame-header",
+          "Extract the visible type and session ID"
+        ]
+      ]
+    },
+    {
+      "id": "frame-binding",
+      "title": "Carry the admission binding with each frame",
+      "description": "context, generation and initial_key_hash bind a pending frame to its admitted session epoch and original client key. progressed records the request time priority class. These fields let a later answer retain the identity assigned when its request was admitted.",
+      "ranges": [
+        {
+          "code": "context: string &default=\"\";\ngeneration: count &default=0;\ninitial_key_hash: string &default=\"\";\nprogressed: bool &default=F;"
+        }
+      ],
+      "links": [
+        [
+          "bind-candidate",
+          "Copy the candidate epoch into the frame"
+        ],
+        [
+          "epoch-guard",
+          "Compare every reply with the admitted epoch"
+        ]
+      ]
+    },
+    {
+      "id": "observation-identity",
+      "title": "Retain typed endpoints and DNS request identity",
+      "description": "`Observation` carries typed `conn_id` endpoints, UID, token, DNS ID, transaction serial, scope, request time, query type and question fingerprint. These compact fields bind the original query to its actual reply and distinguish fresh transactions when a connection UID or DNS ID is reused.",
+      "ranges": [
+        {
+          "code": "type Observation: record {\npeers: conn_id;\nuid: string;\ntoken: string;\ndns_id: count &default=0;\nserial: count &default=0;\nscope: string;\nat: time;\nqtype: count;\nquestion_hash: string;"
+        }
+      ],
+      "links": [
+        [
+          "transaction-token",
+          "Identify one pending DNS transaction"
+        ],
+        [
+          "logical-context",
+          "Identify the session across source ports"
+        ]
+      ]
+    },
+    {
+      "id": "observation-pair",
+      "title": "Represent request only and paired observations",
+      "description": "request always carries a Frame. reply and reply_at are optional fields populated from actual answer data. Request observations retain admission identity; paired observations preserve that same identity and add the decoded server frame and its source time.",
+      "ranges": [
+        {
+          "code": "request: Frame;\nreply: Frame &optional;\nreply_at: time &optional;"
+        }
+      ],
+      "links": [
+        [
+          "dispatch-contract",
+          "Choose local or optional finite dispatch"
+        ],
+        [
+          "deliver-pair",
+          "Attach the actual paired answer"
+        ]
+      ]
+    },
+    {
+      "id": "dispatch-contract",
+      "title": "Export local and overrideable dispatch",
+      "description": "local_dispatch is the shared lifecycle entrypoint. dispatch_observation is a function valued global marked &redef, permitting the optional finite adapter to collect worker observations while the default standalone path invokes the local lifecycle.",
+      "ranges": [
+        {
+          "code": "global local_dispatch: function(o: Observation): Frame;\nglobal dispatch_observation: function(o: Observation): Frame &redef;"
+        }
+      ],
+      "links": [
+        [
+          "local-dispatch",
+          "Run the shared lifecycle"
+        ],
+        [
+          "dispatch-default",
+          "Select the standalone default"
+        ]
+      ]
+    },
+    {
+      "id": "lifecycle-clock",
+      "title": "Default lifecycle time to the native packet clock",
+      "description": "lifecycle_time is a redefinable time returning function initialized to network_time. Sweeps and promotion pressure selection use it. The optional finite owner supplies sorted source observation time, while standalone processing retains native packet time.",
+      "ranges": [
+        {
+          "code": "global lifecycle_time: function(): time = network_time &redef;"
+        }
+      ],
+      "links": [
+        [
+          "sweep",
+          "Apply the selected lifecycle clock during expiry"
+        ],
+        [
+          "promotion-pressure",
+          "Compare retained tombstone times"
+        ]
+      ]
+    },
+    {
+      "id": "connection-gate",
+      "title": "Retain the current DNS message gate",
+      "description": "The connection record gains dnc_message_ok with a false default. dns_message sets it from direction and DNS status before request, question and answer handlers use it. Frames is a vector of the accepted candidate boundaries for one question.",
+      "ranges": [
+        {
+          "code": "redef record connection += { dnc_message_ok: bool &default=F; };\ntype Frames: vector of Frame;"
+        }
+      ],
+      "links": [
+        [
+          "dns-message",
+          "Gate each DNS message"
+        ]
+      ]
+    },
+    {
+      "id": "pending-record",
+      "title": "Retain request identity and candidate frames",
+      "description": "Pending stores admission time, endpoints, uid, observation_token, DNS ID, serial, question fingerprint, requested RR type and admitted frames. The observation token and serial survive into paired observations. question_ok begins false; invalid_response records a response level rejection.",
+      "ranges": [
+        {
+          "code": "type Pending: record {\nat: time;\npeers: conn_id;\nuid: string;\nobservation_token: string;\ndns_id: count;\nserial: count;\nquestion_hash: string;\nqtype: count;\nframes: Frames;\nquestion_ok: bool &default=F;\ninvalid_response: bool &default=F;"
+        }
+      ],
+      "links": [
+        [
+          "reply-question",
+          "Confirm the echoed question"
+        ],
+        [
+          "answer-identity",
+          "Require matching actual answer metadata"
+        ]
+      ]
+    },
+    {
+      "id": "response-block-record",
+      "title": "Keep bounded address blocks and FIFO links",
+      "description": "`blocks` indexes payload chunks by sequence octet, and `rr_count` counts admitted address records including duplicates. `queued` selects unanswered pending entries for FIFO eviction. Embedded `prev_link` and `next_link` fields let append and removal update a fixed number of neighbors and queue ends.",
+      "ranges": [
+        {
+          "code": "blocks: table[count] of string &default=table();\nrr_count: count &default=0;\nqueued: bool &default=F;\nprev_link: string &default=\"\";\nnext_link: string &default=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "address-cap",
+          "Count records within one response"
+        ],
+        [
+          "pending-fifo",
+          "Queue unanswered pending requests"
+        ]
+      ]
+    },
+    {
+      "id": "session-identity-record",
+      "title": "Retain the generation, times and peer keys",
+      "description": "Session retains its generation, admission time at, last accepted paired reply time touched and client_key. server_key starts empty and is filled by the paired negotiation. Key fields hold fingerprints derived from the public key bytes.",
+      "ranges": [
+        {
+          "code": "type Session: record {\ngeneration: count;\nat: time;\ntouched: time;\nclient_key: string;\nserver_key: string &default=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "paired-init",
+          "Require distinct and consistent peer keys"
+        ],
+        [
+          "touch-session",
+          "Update idle time after an accepted pair"
+        ]
+      ]
+    },
+    {
+      "id": "session-evidence-record",
+      "title": "Track stage evidence and retained completion",
+      "description": "enc, syn and msg track accepted paired stages. syn_at and msg_at retain request times used by the ordering guard. done prevents another finding while this state survives; closed records FIN. The final links belong to the candidate FIFO before promotion.",
+      "ranges": [
+        {
+          "code": "enc: bool &default=F;\nsyn: bool &default=F;\nmsg: bool &default=F;\nsyn_at: time &default=double_to_time(0);\nmsg_at: time &default=double_to_time(0);\ndone: bool &default=F;\nclosed: bool &default=F;\nprev_link: string &default=\"\";\nnext_link: string &default=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "notice-guard",
+          "Join the completed ordered evidence"
+        ],
+        [
+          "paired-fin",
+          "Close a matching session"
+        ]
+      ]
+    },
+    {
+      "id": "state-tables",
+      "title": "Separate pending, candidates and progressed sessions",
+      "description": "Separate tables retain pending DNS transactions, unanswered candidates and sessions with reply evidence. Head and tail keys select the two FIFO ends directly. `next_generation` assigns local epochs, and `next_sweep` schedules cleanup. Independent budgets keep speculative admission separate from progressed state.",
+      "ranges": [
+        {
+          "code": "global pending: table[string] of Pending;\nglobal candidate_states: table[string] of Session;\nglobal sessions: table[string] of Session;\nglobal candidate_head = \"\";\nglobal candidate_tail = \"\";\nglobal pending_head = \"\";\nglobal pending_tail = \"\";\nglobal next_generation: count = 0;\nglobal next_sweep: time = double_to_time(0);"
+        }
+      ],
+      "links": [
+        [
+          "candidate-fifo",
+          "Append a new candidate epoch"
+        ],
+        [
+          "pending-fifo",
+          "Append an unanswered DNS transaction"
+        ]
+      ]
+    },
+    {
+      "id": "transaction-serial",
+      "title": "Maintain a new transaction serial",
+      "description": "transaction_serial begins at zero and increments for each newly admitted DNS request path after live token retry checks. This distinguishes fresh transactions from retransmissions that retain an outstanding token.",
+      "ranges": [
+        {
+          "code": "global transaction_serial: count = 0;"
+        }
+      ],
+      "links": [
+        [
+          "new-transaction-token",
+          "Create the request observation identity"
+        ],
+        [
+          "request-retry",
+          "Retain identity for a live pending retry"
+        ]
+      ]
+    },
+    {
+      "id": "parse-counters",
+      "title": "Count parsing and pairing work",
+      "description": "queries counts request callbacks; boundary_attempts counts attempted name splits, and valid_frames counts successful envelope parses. structure_rejected records parser failures, while pairing_rejected records rejected correlation paths. A frame count can include multiple attempts or answers for one session.",
+      "ranges": [
+        {
+          "code": "global queries: count = 0;\nglobal boundary_attempts: count = 0;\nglobal valid_frames: count = 0;\nglobal structure_rejected: count = 0;\nglobal pairing_rejected: count = 0;"
+        }
+      ],
+      "links": [
+        [
+          "health-output",
+          "Read the aggregate counters"
+        ]
+      ]
+    },
+    {
+      "id": "budget-counters",
+      "title": "Count admissions, overflow and expiry",
+      "description": "Admissions count entries accepted into each budget, including candidate to session promotion. pending_overflow and session_overflow count refused capacity paths. Each table has a separate expiry counter, keeping ordinary age cleanup distinct from capacity loss.",
+      "ranges": [
+        {
+          "code": "global pending_admissions: count = 0;\nglobal candidate_admissions: count = 0;\nglobal session_admissions: count = 0;\nglobal pending_overflow: count = 0;\nglobal session_overflow: count = 0;\nglobal pending_expiry: count = 0;\nglobal candidate_expiry: count = 0;\nglobal session_expiry: count = 0;"
+        }
+      ],
+      "links": [
+        [
+          "health-output",
+          "Report admissions and lifetimes"
+        ]
+      ]
+    },
+    {
+      "id": "lifecycle-counters",
+      "title": "Count eviction, epoch rejection and stage outcomes",
+      "description": "Candidate, pending and tombstone evictions have separate counters. candidate_replacements counts unanswered key changes; epoch_rejected counts stale or absent bindings. coverage_degraded aggregates capacity evictions and drops. retries, notices and fins count their corresponding paths.",
+      "ranges": [
+        {
+          "code": "global candidate_evictions: count = 0;\nglobal pending_evictions: count = 0;\nglobal tombstone_evictions: count = 0;\nglobal candidate_replacements: count = 0;\nglobal epoch_rejected: count = 0;\nglobal coverage_degraded: count = 0;\nglobal retries: count = 0;\nglobal notices: count = 0;\nglobal fins: count = 0;"
+        }
+      ],
+      "links": [
+        [
+          "health-output",
+          "Read capacity and lifecycle outcomes"
+        ]
+      ]
+    },
+    {
+      "id": "address-peak-counters",
+      "title": "Count address outcomes and peak occupancy",
+      "description": "address_rejected counts rejected address response paths, and address_duplicates counts repeated identical sequence blocks. Peak counters retain the highest observed number of entries in each bounded table.",
+      "ranges": [
+        {
+          "code": "global address_rejected: count = 0;\nglobal address_duplicates: count = 0;\nglobal peak_pending: count = 0;\nglobal peak_candidates: count = 0;\nglobal peak_sessions: count = 0;"
+        }
+      ],
+      "links": [
+        [
+          "address-duplicates",
+          "Handle duplicate sequence blocks"
+        ],
+        [
+          "health-output",
+          "Compare peaks with configured limits"
+        ]
+      ]
+    },
+    {
+      "id": "remove-candidate",
+      "title": "Unlink a candidate before removal",
+      "description": "`remove_candidate` checks membership, repairs the stored predecessor and successor or the queue head and tail, then deletes the entry. Each unlink performs a fixed number of link updates. Replacement, expiry, FIFO eviction and promotion reuse this operation.",
+      "ranges": [
+        {
+          "code": "function remove_candidate(k: string)\n{\nif ( k !in candidate_states ) return;\nlocal s = candidate_states[k];\nif ( s$prev_link != \"\" ) candidate_states[s$prev_link]$next_link = s$next_link;\nelse candidate_head = s$next_link;\nif ( s$next_link != \"\" ) candidate_states[s$next_link]$prev_link = s$prev_link;\nelse candidate_tail = s$prev_link;\ndelete candidate_states[k];"
+        }
+      ],
+      "links": [
+        [
+          "candidate-cap",
+          "Evict the FIFO head"
+        ],
+        [
+          "promote-store",
+          "Move a candidate into session state"
+        ]
+      ]
+    },
+    {
+      "id": "remove-pending",
+      "title": "Unlink eligible pending requests before removal",
+      "description": "`remove_pending` checks membership and uses `queued` to select entries whose FIFO links need repair. It updates the stored neighbors or queue ends and deletes the table entry. Each unlink performs a fixed number of link updates; progressed priority entries require only table removal.",
+      "ranges": [
+        {
+          "code": "function remove_pending(k: string)\n{\nif ( k !in pending ) return;\nlocal p = pending[k];\nif ( p$queued )\n{\nif ( p$prev_link != \"\" ) pending[p$prev_link]$next_link = p$next_link;\nelse pending_head = p$next_link;\nif ( p$next_link != \"\" ) pending[p$next_link]$prev_link = p$prev_link;\nelse pending_tail = p$prev_link;\n}\ndelete pending[k];"
+        }
+      ],
+      "links": [
+        [
+          "pending-cap",
+          "Choose an eligible pending victim"
+        ],
+        [
+          "response-end",
+          "Consume the finished response"
+        ]
+      ]
+    },
+    {
+      "id": "sweep",
+      "title": "Expire state using lifecycle time",
+      "description": "`sweep` compares `lifecycle_time` with `next_sweep` and spaces cleanup by `sweep_interval`. It scans the bounded tables for pending and candidate admission age and session idle age, then removes expired entries and updates counters. The configured capacities bound the scan population; FIFO unlinking handles each selected removal.",
+      "ranges": [
+        {
+          "code": "function sweep()\n{\nif ( lifecycle_time() < next_sweep ) return;\nnext_sweep = lifecycle_time() + sweep_interval;\nlocal pp: set[string] = set();\nlocal cc: set[string] = set();\nlocal ss: set[string] = set();\nfor ( p in pending )\nif ( lifecycle_time() - pending[p]$at >= pending_ttl ) add pp[p];\nfor ( c in candidate_states )\nif ( lifecycle_time() - candidate_states[c]$at >= candidate_ttl ) add cc[c];\nfor ( s in sessions )\nif ( lifecycle_time() - sessions[s]$touched >= session_ttl ) add ss[s];\nfor ( pk in pp ) { remove_pending(pk); ++pending_expiry; }\nfor ( ck in cc ) { remove_candidate(ck); ++candidate_expiry; }\nfor ( sk in ss ) { delete sessions[sk]; ++session_expiry; }"
+        }
+      ],
+      "links": [
+        [
+          "lifetime-settings",
+          "Set each age limit"
+        ],
+        [
+          "request-retry",
+          "Check pending age at request access"
+        ],
+        [
+          "admission-expiry",
+          "Check lifecycle age at admission"
+        ]
+      ]
+    },
+    {
+      "id": "hex-input",
+      "title": "Validate hexadecimal input before conversion",
+      "description": "parse_hex begins with an invalid Frame. It requires at least ten hexadecimal characters, an even character count, the configured maximum length and a full hexadecimal alphabet match before hexstr_to_bytestring. Invalid input increments structure_rejected and returns the default frame.",
+      "ranges": [
+        {
+          "code": "function parse_hex(h: string): Frame\n{\nlocal f: Frame;\n# hexstr_to_bytestring has undefined behavior for invalid/odd input.\nif ( |h| < 10 || |h| > 2 * max_frame_bytes || |h| % 2 != 0 || ! (/^[0-9a-fA-F]+$/ in h) )\n{ ++structure_rejected; return f; }\nlocal b = hexstr_to_bytestring(h);"
+        }
+      ],
+      "links": [
+        [
+          "decode-settings",
+          "Bound the decoded size"
+        ]
+      ]
+    },
+    {
+      "id": "frame-header",
+      "title": "Extract the visible type and session ID",
+      "description": "length records the decoded byte count. bytestring_to_count reads the single type byte at b[2:3]. h[6:10] selects the two byte session ID as four lowercase hex characters. Later pairing requires the reply to carry that same ID.",
+      "ranges": [
+        {
+          "code": "f$length = |b|;\nf$kind = bytestring_to_count(b[2:3]);\nf$sid = to_lower(h[6:10]);"
+        }
+      ],
+      "links": [
+        [
+          "reply-sid",
+          "Match the reply session ID"
+        ]
+      ]
+    },
+    {
+      "id": "init-envelope",
+      "title": "Require the zero subtype INIT envelope",
+      "description": "Kind 3 selects the ENC branch. Its frame must be exactly 73 bytes and b[5:9] must contain four zero bytes for the supported INIT subtype and flags. This guard checks the exposed negotiation layout before key fingerprinting.",
+      "ranges": [
+        {
+          "code": "if ( f$kind == 3 )\n{\n# packet.h/c: INIT=0, flags=0 for this profile, 64-byte P-256 X||Y.\nif ( |b| != 73 || b[5:9] != \"\\x00\\x00\\x00\\x00\" )\n{ ++structure_rejected; return f; }"
+        }
+      ],
+      "links": [
+        [
+          "init-coordinate",
+          "Check the coordinate representation"
+        ]
+      ]
+    },
+    {
+      "id": "init-coordinate",
+      "title": "Check coordinate shape and retain a fingerprint",
+      "description": "The parser splits the 64 byte public key into lowercase X and Y hex strings. Each coordinate must be nonzero and lexically smaller than the fixed width `P-256` field prime. `sha256_hash(b[9:73])` retains the key fingerprint used by the distinct peer and generation comparisons.",
+      "ranges": [
+        {
+          "code": "local x = to_lower(h[18:82]);\nlocal y = to_lower(h[82:146]);\nlocal prime = \"ffffffff00000001000000000000000000000000ffffffffffffffffffffffff\";\n# Cheap shape/range checks only, deliberately not an EC point check.\nif ( /^0+$/ in x || /^0+$/ in y || strcmp(x,prime) >= 0 || strcmp(y,prime) >= 0 )\n{ ++structure_rejected; return f; }\nf$key_hash = sha256_hash(b[9:73]);"
+        }
+      ],
+      "links": [
+        [
+          "paired-init",
+          "Compare the retained peer fingerprints"
+        ]
+      ]
+    },
+    {
+      "id": "encrypted-envelopes",
+      "title": "Require the encrypted stage envelope lengths",
+      "description": "Kinds 0 and 1 select SYN and MSG and require at least 17 decoded bytes. Kind 2 selects FIN and requires at least 14. These guards require the visible header, MAC, nonce and minimum encrypted body envelope before admitting the stage metadata.",
+      "ranges": [
+        {
+          "code": "else if ( f$kind == 0 || f$kind == 1 )\n{\n# Clear header(5), truncated MAC(6), nonce(2), encrypted seq/options\n# or seq/ACK(4). Those last fields are NOT decoded or authenticated.\nif ( |b| < 17 ) { ++structure_rejected; return f; }\n}\nelse if ( f$kind == 2 )\n{\n# FIN includes at least an encrypted terminating NUL after MAC/nonce.\nif ( |b| < 14 ) { ++structure_rejected; return f; }\n}\nelse { ++structure_rejected; return f; }"
+        }
+      ],
+      "links": [
+        [
+          "paired-syn",
+          "Retain paired SYN evidence"
+        ],
+        [
+          "paired-msg",
+          "Retain paired MSG evidence"
+        ],
+        [
+          "paired-fin",
+          "Handle a paired FIN"
+        ]
+      ]
+    },
+    {
+      "id": "frame-valid",
+      "title": "Mark the accepted envelope",
+      "description": "After a supported type passes its envelope checks, the parser sets valid to T, increments valid_frames and returns the metadata. The lifecycle and answer paths use valid to admit only accepted decoded frames.",
+      "ranges": [
+        {
+          "code": "f$valid = T;\n++valid_frames;\nreturn f;"
+        }
+      ],
+      "links": [
+        [
+          "normalize-requests",
+          "Retain admitted request frames"
+        ]
+      ]
+    },
+    {
+      "id": "tag-query",
+      "title": "Decode the explicit dnscat name wrapper",
+      "description": "candidates starts with an empty vector and enforces max_name_bytes. A name beginning dnscat. is treated as the explicit tag form: dots are removed after that prefix, the hex is parsed, and a valid frame receives the suffix identity @tag:dnscat.",
+      "ranges": [
+        {
+          "code": "function candidates(query: string): Frames\n{\nlocal out: Frames = vector();\nif ( |query| > max_name_bytes ) { ++structure_rejected; return out; }\nif ( starts_with(query,\"dnscat.\") )\n{\n++boundary_attempts;\nlocal tag = parse_hex(gsub(query[7:],/\\./,\"\"));\nif ( tag$valid ) { tag$suffix = \"@tag:dnscat\"; out[|out|] = tag; }\nreturn out;"
+        }
+      ],
+      "links": [
+        [
+          "name-answer",
+          "Unwrap CNAME and MX reply names"
+        ]
+      ]
+    },
+    {
+      "id": "query-boundaries",
+      "title": "Try bounded leading label splits",
+      "description": "The remaining name path accumulates leading hexadecimal labels. It stops before consuming the final suffix label, at max_boundaries, or at the first nonhex label. Each valid accumulated prefix becomes a frame whose suffix is the remaining name. Alternative valid boundaries remain candidates for later pairing.",
+      "ranges": [
+        {
+          "code": "local labels = split_string(query,/\\./);\nlocal h = \"\";\nlocal consumed: count = 0;\nlocal tried: count = 0;\nfor ( i in labels )\n{\nif ( i + 1 >= |labels| || tried >= max_boundaries ) break;\nif ( ! (/^[0-9a-fA-F]+$/ in labels[i]) ) break;\nh += labels[i];\nconsumed += |labels[i]| + 1;\n++tried; ++boundary_attempts;\nlocal f = parse_hex(h);\nif ( f$valid ) { f$suffix = query[consumed:]; out[|out|] = f; }\n}\nreturn out;"
+        }
+      ],
+      "links": [
+        [
+          "normalize-requests",
+          "Admit each normalized boundary"
+        ]
+      ]
+    },
+    {
+      "id": "logical-context",
+      "title": "Build the logical session identity",
+      "description": "`context` combines scope, observed client and server addresses, typed server port, suffix and SID. The typed port retains transport. Logical correlation follows these fields across UDP source port changes, while UID and source port remain available in transaction metadata.",
+      "ranges": [
+        {
+          "code": "function context(o: Observation): string\n{\n# Typed server port includes transport; client port/UID are not logical ID.\nreturn fmt(\"%s|%s|%s|%s|%s|%s\",o$scope,o$peers$orig_h,o$peers$resp_h,o$peers$resp_p,o$request$suffix,o$request$sid);"
+        }
+      ],
+      "links": [
+        [
+          "transaction-token",
+          "Keep DNS transaction identity separate"
+        ],
+        [
+          "observation-scope",
+          "Select the observation namespace"
+        ]
+      ]
+    },
+    {
+      "id": "admission-expiry",
+      "title": "Check lifecycle age at request admission",
+      "description": "admit_observation copies the request and fills its context. It removes a session whose idle age reaches session_ttl and a candidate whose admission age reaches candidate_ttl before using either entry. Each removal increments the corresponding expiry counter.",
+      "ranges": [
+        {
+          "code": "function admit_observation(o: Observation): Frame\n{\nlocal f = o$request;\nf$context = context(o);\nlocal empty: Frame;\nif ( f$context in sessions && o$at - sessions[f$context]$touched >= session_ttl )\n{ delete sessions[f$context]; ++session_expiry; }\nif ( f$context in candidate_states && o$at - candidate_states[f$context]$at >= candidate_ttl )\n{ remove_candidate(f$context); ++candidate_expiry; }"
+        }
+      ],
+      "links": [
+        [
+          "sweep",
+          "Apply the selected lifecycle clock during expiry"
+        ]
+      ]
+    },
+    {
+      "id": "bind-progressed",
+      "title": "Bind requests to an existing progressed epoch",
+      "description": "An existing session rejects closed state and an INIT carrying a different client key. Accepted requests receive progressed=T plus the session generation and original client key fingerprint. That admission time hint gives their pending DNS entries priority over unanswered FIFO entries.",
+      "ranges": [
+        {
+          "code": "if ( f$context in sessions )\n{\nlocal active = sessions[f$context];\nif ( active$closed || (f$kind == 3 && active$client_key != f$key_hash) )\n{ ++pairing_rejected; return empty; }\nf$progressed = T;\nf$generation = active$generation;\nf$initial_key_hash = active$client_key;\nreturn f;"
+        }
+      ],
+      "links": [
+        [
+          "pending-priority",
+          "Capture priority when pending DNS is stored"
+        ],
+        [
+          "epoch-guard",
+          "Recheck the epoch before any reply update"
+        ]
+      ]
+    },
+    {
+      "id": "replace-candidate",
+      "title": "Revoke the old unanswered epoch on a new key",
+      "description": "For a kind 3 request, a different client key removes the existing candidate and increments candidate_replacements. Old pending frames retain their earlier binding. A new candidate admission gets another generation, so the old answer reaches the epoch guard with its original identity.",
+      "ranges": [
+        {
+          "code": "if ( f$kind == 3 )\n{\n# A new unanswered key revokes the old epoch even before timeout. Old\n# pending facts retain their old binding; they cannot resurrect it.\nif ( f$context in candidate_states && candidate_states[f$context]$client_key != f$key_hash )\n{ remove_candidate(f$context); ++candidate_replacements; }"
+        }
+      ],
+      "links": [
+        [
+          "epoch-guard",
+          "Reject stale A after candidate B replaces it"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-cap",
+      "title": "Bound unanswered candidates with FIFO eviction",
+      "description": "A fresh candidate requires `max_candidates` above zero. At the 512 entry default cap, `candidate_head` selects one oldest candidate for eviction. Unlinking updates a fixed number of links, then the new candidate can enter. `candidate_evictions` and `coverage_degraded` record the lost observation state, while progressed sessions retain their separate quota.",
+      "ranges": [
+        {
+          "code": "if ( f$context !in candidate_states )\n{\nif ( max_candidates == 0 ) { ++coverage_degraded; return empty; }\nif ( |candidate_states| >= max_candidates )\n{ remove_candidate(candidate_head); ++candidate_evictions; ++coverage_degraded; }"
+        }
+      ],
+      "links": [
+        [
+          "capacity-settings",
+          "Configure candidate capacity"
+        ],
+        [
+          "candidate-fifo",
+          "Append the admitted candidate"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-fifo",
+      "title": "Append a new candidate epoch",
+      "description": "Admission increments `next_generation` and `candidate_admissions`, creates the candidate with its request time and key fingerprint, and appends it through `candidate_tail`. Updating the previous tail and queue ends takes a fixed number of link changes. Retries preserve admission order; `peak_candidates` records occupancy.",
+      "ranges": [
+        {
+          "code": "++next_generation; ++candidate_admissions;\nlocal s: Session = [$generation=next_generation,$at=o$at,$touched=o$at,$client_key=f$key_hash,$prev_link=candidate_tail];\nif ( candidate_tail != \"\" ) candidate_states[candidate_tail]$next_link = f$context;\nelse candidate_head = f$context;\ncandidate_tail = f$context;\ncandidate_states[f$context] = s;\nif ( |candidate_states| > peak_candidates ) peak_candidates = |candidate_states|;"
+        }
+      ],
+      "links": [
+        [
+          "remove-candidate",
+          "Repair links when state leaves the FIFO"
+        ]
+      ]
+    },
+    {
+      "id": "bind-candidate",
+      "title": "Copy the candidate binding into the pending frame",
+      "description": "A request requires an existing candidate context after admission processing. The returned frame receives that candidate generation and initial client key fingerprint. SYN, MSG and FIN requests can therefore carry the same binding while the negotiation reply is still outstanding.",
+      "ranges": [
+        {
+          "code": "if ( f$context !in candidate_states ) return empty;\nf$generation = candidate_states[f$context]$generation;\nf$initial_key_hash = candidate_states[f$context]$client_key;\nreturn f;"
+        }
+      ],
+      "links": [
+        [
+          "epoch-guard",
+          "Fence all paired kinds by this binding"
+        ],
+        [
+          "paired-syn",
+          "Retain early paired stage evidence"
+        ]
+      ]
+    },
+    {
+      "id": "promotion-pressure",
+      "title": "Prefer live progressed state at promotion pressure",
+      "description": "`promote` checks the progressed session budget when a matching negotiation reply supplies evidence. At capacity it scans retained sessions for the oldest touched `done` or `closed` entry and reclaims that tombstone. A table full of live incomplete sessions refuses promotion and increments `session_overflow` and `coverage_degraded`. The session cap bounds this scan.",
+      "ranges": [
+        {
+          "code": "function promote(k: string, s: Session): bool\n{\nif ( |sessions| >= max_sessions )\n{\n# Scan only on reply-backed promotion pressure, never per INIT admission.\nlocal oldest = \"\";\nlocal oldest_at = lifecycle_time();\nfor ( key in sessions )\nif ( (sessions[key]$done || sessions[key]$closed) && sessions[key]$touched <= oldest_at )\n{ oldest = key; oldest_at = sessions[key]$touched; }\nif ( oldest != \"\" ) { delete sessions[oldest]; ++tombstone_evictions; ++coverage_degraded; }\nelse { ++session_overflow; ++coverage_degraded; return F; }"
+        }
+      ],
+      "links": [
+        [
+          "promote-store",
+          "Store a successfully promoted session"
+        ],
+        [
+          "notice-dedup",
+          "Retain completion within the bounded state"
+        ]
+      ]
+    },
+    {
+      "id": "promote-store",
+      "title": "Move the same epoch into progressed state",
+      "description": "A zero session budget refuses promotion. Successful promotion unlinks the candidate, clears its FIFO links and stores the same Session in sessions. It increments session_admissions and updates peak_sessions. Keeping the record preserves the generation and any SYN or MSG evidence already paired.",
+      "ranges": [
+        {
+          "code": "if ( max_sessions == 0 ) { ++session_overflow; ++coverage_degraded; return F; }\nremove_candidate(k);\ns$prev_link = \"\"; s$next_link = \"\";\nsessions[k] = s;\n++session_admissions;\nif ( |sessions| > peak_sessions ) peak_sessions = |sessions|;\nreturn T;"
+        }
+      ],
+      "links": [
+        [
+          "promote-after-init",
+          "Promote once the paired negotiation exists"
+        ]
+      ]
+    },
+    {
+      "id": "paired-state",
+      "title": "Find the candidate or progressed state for a pair",
+      "description": "paired_observation reads the admitted request and actual reply. It prefers sessions, otherwise looks in candidate_states. Missing state increments both pairing_rejected and epoch_rejected, preserving missing evidence as a rejected update.",
+      "ranges": [
+        {
+          "code": "function paired_observation(o: Observation)\n{\nlocal q = o$request;\nlocal r = o$reply;\nlocal s: Session;\nlocal progressed = q$context in sessions;\nif ( progressed ) s = sessions[q$context];\nelse if ( q$context in candidate_states ) s = candidate_states[q$context];\nelse { ++pairing_rejected; ++epoch_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "epoch-guard",
+          "Validate the retained binding"
+        ]
+      ]
+    },
+    {
+      "id": "epoch-guard",
+      "title": "Fence every paired kind with generation and key",
+      "description": "Every paired ENC, SYN, MSG and FIN update requires the request generation and original key fingerprint to match current state. The guard runs before stage changes and idle refresh. A late reply keeps its original binding after candidate replacement, expiry or eviction, so it is rejected before touching a newer epoch.",
+      "ranges": [
+        {
+          "code": "# Fence ALL kinds and idle updates across candidate removal/replacement and\n# promotion. A paired echo question is never a substitute for this evidence.\nif ( q$generation != s$generation || q$initial_key_hash != s$client_key )\n{ ++pairing_rejected; ++epoch_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "replace-candidate",
+          "Create the new unanswered key epoch"
+        ],
+        [
+          "touch-session",
+          "Refresh idle time only after accepted evidence"
+        ]
+      ]
+    },
+    {
+      "id": "reply-age",
+      "title": "Check the reply against the current state lifetime",
+      "description": "The reply timestamp must be within session_ttl of touched for progressed state, or candidate_ttl of at for speculative state. A stale pair increments pairing_rejected and epoch_rejected before any evidence update.",
+      "ranges": [
+        {
+          "code": "if ( (progressed && o$reply_at - s$touched >= session_ttl) || (! progressed && o$reply_at - s$at >= candidate_ttl) )\n{ ++pairing_rejected; ++epoch_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "lifetime-settings",
+          "Configure each lifetime"
+        ]
+      ]
+    },
+    {
+      "id": "reply-sid",
+      "title": "Match the request and answer session IDs",
+      "description": "The decoded server frame must carry the same sid as the admitted request. A mismatch increments pairing_rejected and returns before stage evidence changes.",
+      "ranges": [
+        {
+          "code": "if ( r$sid != q$sid ) { ++pairing_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "frame-header",
+          "Extract the two byte SID"
+        ]
+      ]
+    },
+    {
+      "id": "paired-init",
+      "title": "Require distinct and consistent peer keys",
+      "description": "A kind 3 request and kind 3 reply form the negotiation pair. Equal client and server key fingerprints reject. A previously retained server fingerprint must also match the new reply. The accepted reply sets server_key and enc, providing the reply backed negotiation needed for promotion.",
+      "ranges": [
+        {
+          "code": "if ( q$kind == 3 && r$kind == 3 )\n{\nif ( q$key_hash == r$key_hash || (s$server_key != \"\" && s$server_key != r$key_hash) )\n{ ++pairing_rejected; return; }\ns$server_key = r$key_hash; s$enc = T;"
+        }
+      ],
+      "links": [
+        [
+          "init-coordinate",
+          "Derive peer fingerprints"
+        ],
+        [
+          "promote-after-init",
+          "Promote paired negotiation evidence"
+        ]
+      ]
+    },
+    {
+      "id": "paired-syn",
+      "title": "Retain the earliest paired SYN request time",
+      "description": "A kind 0 request and kind 0 reply set syn. syn_at retains the earliest accepted SYN request time, which allows reply arrival order to differ from request order while preserving the later Notice ordering check.",
+      "ranges": [
+        {
+          "code": "else if ( q$kind == 0 && r$kind == 0 )\n{\nif ( ! s$syn || o$at < s$syn_at ) s$syn_at = o$at;\ns$syn = T;"
+        }
+      ],
+      "links": [
+        [
+          "notice-guard",
+          "Compare the retained request times"
+        ]
+      ]
+    },
+    {
+      "id": "paired-msg",
+      "title": "Retain the latest paired MSG request time",
+      "description": "A kind 1 request paired with a kind 1 reply sets `msg`. `msg_at` retains the latest accepted MSG request time. This paired envelope supplies traffic evidence in both directions for the final ordered session guard.",
+      "ranges": [
+        {
+          "code": "else if ( q$kind == 1 && r$kind == 1 )\n{\nif ( ! s$msg || o$at > s$msg_at ) s$msg_at = o$at;\ns$msg = T;"
+        }
+      ],
+      "links": [
+        [
+          "notice-guard",
+          "Require MSG at or after SYN"
+        ]
+      ]
+    },
+    {
+      "id": "paired-fin",
+      "title": "Close the matching generation on FIN",
+      "description": "A kind 2 reply closes a request of kind 1 or 2. fins increments only on the first transition to closed. Other kind combinations increment pairing_rejected. Closed state prevents Notice emission and rejects later request admission while the session entry remains retained.",
+      "ranges": [
+        {
+          "code": "else if ( r$kind == 2 && (q$kind == 1 || q$kind == 2) )\n{ if ( ! s$closed ) ++fins; s$closed = T; }\nelse { ++pairing_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "bind-progressed",
+          "Apply the closed state admission guard"
+        ],
+        [
+          "promotion-pressure",
+          "Reclaim closed retained state under pressure"
+        ]
+      ]
+    },
+    {
+      "id": "touch-session",
+      "title": "Refresh idle time after an accepted pair",
+      "description": "Each accepted stage pair sets touched to the actual reply time. This includes repeated accepted stage evidence, so session idle lifetime follows accepted paired traffic. Rejected epochs, ages, IDs and kind combinations return before this assignment.",
+      "ranges": [
+        {
+          "code": "s$touched = o$reply_at;"
+        }
+      ],
+      "links": [
+        [
+          "reply-age",
+          "Check age before the refresh"
+        ],
+        [
+          "sweep",
+          "Apply the selected lifecycle clock during expiry"
+        ]
+      ]
+    },
+    {
+      "id": "promote-after-init",
+      "title": "Promote once paired negotiation is present",
+      "description": "A candidate with enc set calls promote using the current context and Session. A refused promotion returns immediately; a successful move sets progressed=T. This keeps unanswered INIT admission independent of the progressed session budget.",
+      "ranges": [
+        {
+          "code": "if ( ! progressed && s$enc )\n{\nif ( ! promote(q$context,s) ) return;\nprogressed = T;"
+        }
+      ],
+      "links": [
+        [
+          "paired-init",
+          "Set enc from distinct paired peer keys"
+        ],
+        [
+          "promote-store",
+          "Preserve the epoch during the move"
+        ]
+      ]
+    },
+    {
+      "id": "notice-guard",
+      "title": "Require the ordered session pattern",
+      "description": "Progressed state raises a finding when done and closed are false, all three enc/syn/msg evidence flags are true, and admission time is at or before the earliest paired SYN request, which is at or before the latest paired MSG request. Paired stages can be retained before the INIT reply arrives.",
+      "ranges": [
+        {
+          "code": "if ( progressed )\n{\nif ( ! s$done && ! s$closed && s$enc && s$syn && s$msg && s$at <= s$syn_at && s$syn_at <= s$msg_at )"
+        }
+      ],
+      "links": [
+        [
+          "paired-init",
+          "Require the paired peer key negotiation"
+        ],
+        [
+          "paired-syn",
+          "Read the retained SYN request time"
+        ],
+        [
+          "paired-msg",
+          "Read the retained MSG request time"
+        ]
+      ]
+    },
+    {
+      "id": "notice-dedup",
+      "title": "Mark completion before emitting",
+      "description": "The matching branch sets `done=T` and increments `notices` before calling `NOTICE`. Later qualifying pairs retain that flag and produce one Notice for the retained session. Expiry or tombstone reclamation ends the retention window, allowing a later fully reconstructed session to qualify again.",
+      "ranges": [
+        {
+          "code": "s$done = T; ++notices;"
+        }
+      ],
+      "links": [
+        [
+          "promotion-pressure",
+          "Reclaim completed state only at promotion pressure"
+        ],
+        [
+          "sweep",
+          "Apply the selected lifecycle clock during expiry"
+        ]
+      ]
+    },
+    {
+      "id": "notice-record",
+      "title": "Attach the observed endpoints and uid",
+      "description": "`NOTICE` receives `CompatibleSession`, the completing source pair’s `reply_at`, typed observed endpoints and UID. Standalone processing evaluates pairs incrementally. The optional finite adapter calls this emitter after both assigned inputs close and the window commits; `$ts` still records the completing source evidence time.",
+      "ranges": [
+        {
+          "code": "NOTICE([$note=CompatibleSession,$ts=o$reply_at,$id=o$peers,$uid=o$uid,"
+        }
+      ],
+      "links": [
+        [
+          "notice-type",
+          "Resolve the exported classification"
+        ],
+        [
+          "deliver-pair",
+          "Trace the matched transaction metadata"
+        ]
+      ]
+    },
+    {
+      "id": "notice-message",
+      "title": "Emit the literal session pattern message",
+      "description": "$msg is a fixed string describing paired negotiation, session start messages and two way traffic. It has zero formatting arguments. The evidence guard determines when this literal appears in the standard Notice record.",
+      "ranges": [
+        {
+          "code": "$msg=\"dnscat2 DNS session pattern observed: paired negotiation and session-start messages followed by two-way session traffic\","
+        }
+      ],
+      "links": [
+        [
+          "notice-guard",
+          "Read the evidence required for emission"
+        ]
+      ]
+    },
+    {
+      "id": "notice-subject",
+      "title": "Format suffix and SID after fixed evidence labels",
+      "description": "fmt fills the first %s with q$suffix and the second with q$sid. The preceding labels record ENC_INIT,SYN,MSG, distinct peer keys and matched DNS request/reply evidence. $identifier uses q$context; $suppress_for=0sec leaves retained done state responsible for this module’s deduplication.",
+      "ranges": [
+        {
+          "code": "$sub=fmt(\"evidence=ENC_INIT,SYN,MSG; peer_keys=distinct; dns_request_reply=matched; suffix=%s; sid=%s\",q$suffix,q$sid),$identifier=q$context,$suppress_for=0sec]);"
+        }
+      ],
+      "links": [
+        [
+          "logical-context",
+          "Trace the Notice identifier"
+        ],
+        [
+          "frame-header",
+          "Trace SID extraction"
+        ],
+        [
+          "tag-query",
+          "Trace the explicit suffix form"
+        ],
+        [
+          "query-boundaries",
+          "Trace ordinary suffix boundaries"
+        ]
+      ]
+    },
+    {
+      "id": "save-state",
+      "title": "Write accepted evidence to its current table",
+      "description": "After progressed handling, the updated record is stored in sessions. A record still speculative is stored in candidate_states. This retains paired stage evidence and touched time in the same lifecycle record used by the next observation.",
+      "ranges": [
+        {
+          "code": "sessions[q$context] = s;\n}\nelse candidate_states[q$context] = s;"
+        }
+      ],
+      "links": [
+        [
+          "promote-after-init",
+          "Choose the progressed population"
+        ]
+      ]
+    },
+    {
+      "id": "local-dispatch",
+      "title": "Dispatch locally by reply presence",
+      "description": "local_dispatch first invokes sweep. A request calls admit_observation and returns its bound Frame; a paired observation calls paired_observation and returns an empty Frame. Standalone calls this entry incrementally, and the optional finite owner calls the same lifecycle after complete window authorization.",
+      "ranges": [
+        {
+          "code": "function local_dispatch(o: Observation): Frame\n{\nsweep();\nif ( ! o?$reply ) return admit_observation(o);\npaired_observation(o);\nlocal empty: Frame;\nreturn empty;"
+        }
+      ],
+      "links": [
+        [
+          "observation-pair",
+          "Represent the two observation forms"
+        ]
+      ]
+    },
+    {
+      "id": "dispatch-default",
+      "title": "Bind the default callback to local dispatch",
+      "description": "redef assigns local_dispatch to dispatch_observation. The base module imports the Notice framework alone; loading the optional adapter explicitly replaces this callback and its lifecycle clock.",
+      "ranges": [
+        {
+          "code": "redef dispatch_observation = local_dispatch;"
+        }
+      ],
+      "links": [
+        [
+          "dispatch-contract",
+          "Expose the overrideable callback"
+        ],
+        [
+          "lifecycle-clock",
+          "Select the lifecycle time provider"
+        ]
+      ]
+    },
+    {
+      "id": "transaction-token",
+      "title": "Identify one pending DNS transaction",
+      "description": "token combines connection uid and DNS message ID to index pending DNS state. A fresh request also receives an observation_token with a monotonic serial. Logical session context separately uses scope, endpoints, suffix and SID.",
+      "ranges": [
+        {
+          "code": "function token(c: connection, msg: dns_msg): string\n{ return fmt(\"%s|%d\",c$uid,msg$id); }"
+        }
+      ],
+      "links": [
+        [
+          "logical-context",
+          "Compare the logical session key"
+        ],
+        [
+          "new-transaction-token",
+          "Distinguish a fresh observation token"
+        ]
+      ]
+    },
+    {
+      "id": "answer-gate",
+      "title": "Require an admitted current reply",
+      "description": "identity requires the current message gate, QR reply role and a pending transaction token. It also removes a pending request whose age reaches pending_ttl. Answer data can proceed only while its retained DNS request remains live.",
+      "ranges": [
+        {
+          "code": "function identity(c: connection, msg: dns_msg, ans: dns_answer): bool\n{\nlocal k = token(c,msg);\nif ( ! c$dnc_message_ok || ! msg$QR || k !in pending ) return F;\nlocal p = pending[k];\nif ( network_time() - p$at >= pending_ttl )\n{ remove_pending(k); ++pending_expiry; return F; }"
+        }
+      ],
+      "links": [
+        [
+          "dns-message",
+          "Check direction and status first"
+        ],
+        [
+          "answer-identity",
+          "Check the actual answer record"
+        ]
+      ]
+    },
+    {
+      "id": "answer-identity",
+      "title": "Require matching actual answer metadata",
+      "description": "The reply question must already match. ans must be in the answer section, IN class, the requested RR type and the lowercase owner name must hash to the retained question fingerprint. A failure poisons invalid_response and increments pairing_rejected; subsequent identity checks honor that flag.",
+      "ranges": [
+        {
+          "code": "if ( ! p$question_ok || ans$answer_type != DNS_ANS || ans$qclass != 1 || ans$qtype != p$qtype || sha256_hash(to_lower(ans$query)) != p$question_hash )\n{ pending[k]$invalid_response = T; ++pairing_rejected; return F; }\nreturn ! p$invalid_response;"
+        }
+      ],
+      "links": [
+        [
+          "reply-question",
+          "Establish the matching question"
+        ],
+        [
+          "address-cap",
+          "Collect only admitted address records"
+        ]
+      ]
+    },
+    {
+      "id": "deliver-pair",
+      "title": "Build paired observations from actual answer data",
+      "description": "deliver requires a valid decoded reply. It copies the retained observation_token, DNS ID, serial, endpoints, uid, question identity and request time into Observation, adds the bound request Frame and actual answer Frame, and records reply_at from network_time before dispatch.",
+      "ranges": [
+        {
+          "code": "function deliver(k: string, q: Frame, r: Frame)\n{\nif ( ! r$valid ) { ++pairing_rejected; return; }\nlocal p = pending[k];\nlocal o: Observation = [$peers=p$peers,$uid=p$uid,$token=p$observation_token,$dns_id=p$dns_id,$serial=p$serial,$scope=observation_scope,$at=p$at,$qtype=p$qtype,$question_hash=p$question_hash,$request=q,$reply=r,$reply_at=network_time()];\ndispatch_observation(o);"
+        }
+      ],
+      "links": [
+        [
+          "local-dispatch",
+          "Apply the local paired lifecycle"
+        ],
+        [
+          "epoch-guard",
+          "Validate the retained request binding"
+        ]
+      ]
+    },
+    {
+      "id": "answer-input",
+      "title": "Bound text or name answer work",
+      "description": "answer first applies identity. It bounds the input length by 2*max_frame_bytes+max_name_bytes+16, then evaluates the actual response data against each retained request boundary. Lowercasing permits hexadecimal letter case to share the same decoded bytes.",
+      "ranges": [
+        {
+          "code": "function answer(c: connection, msg: dns_msg, ans: dns_answer, data: string, is_txt: bool)\n{\nif ( ! identity(c,msg,ans) ) return;\nlocal k = token(c,msg);\nlocal p = pending[k];\nif ( |data| > 2*max_frame_bytes+max_name_bytes+16 ) { ++structure_rejected; return; }\nfor ( i in p$frames )\n{\nlocal q = p$frames[i];\nlocal h = to_lower(data);"
+        }
+      ],
+      "links": [
+        [
+          "name-answer",
+          "Validate the name wrapper"
+        ],
+        [
+          "answer-parse",
+          "Parse the selected reply bytes"
+        ]
+      ]
+    },
+    {
+      "id": "name-answer",
+      "title": "Unwrap CNAME and MX names with the admitted suffix",
+      "description": "For name answers, the text must fit max_name_bytes. Tagged requests require a dnscat. response prefix; ordinary requests require a dot followed by the exact admitted suffix. The decoder removes that wrapper and dots before parsing the remaining hexadecimal message.",
+      "ranges": [
+        {
+          "code": "if ( ! is_txt )\n{\nif ( |h| > max_name_bytes ) { ++structure_rejected; next; }\nif ( q$suffix == \"@tag:dnscat\" )\n{\nif ( ! starts_with(h,\"dnscat.\") ) { ++pairing_rejected; next; }\nh = h[7:];\n}\nelse\n{\nif ( ! ends_with(h,cat(\".\",q$suffix)) ) { ++pairing_rejected; next; }\nh = h[0:|h|-|q$suffix|-1];\n}\nh = gsub(h,/\\./,\"\");"
+        }
+      ],
+      "links": [
+        [
+          "tag-query",
+          "Recognize tagged request names"
+        ],
+        [
+          "query-boundaries",
+          "Retain each ordinary suffix candidate"
+        ],
+        [
+          "mx-event",
+          "Use the same wrapper for MX"
+        ]
+      ]
+    },
+    {
+      "id": "answer-parse",
+      "title": "Parse the actual text or unwrapped name payload",
+      "description": "The selected answer text becomes parse_hex input, then deliver combines the decoded reply with its retained request frame. TXT enters with raw concatenated text; name answers reach this call after wrapper removal.",
+      "ranges": [
+        {
+          "code": "deliver(k,q,parse_hex(h));"
+        }
+      ],
+      "links": [
+        [
+          "hex-input",
+          "Validate reply framing"
+        ],
+        [
+          "txt-event",
+          "Concatenate TXT character strings"
+        ]
+      ]
+    },
+    {
+      "id": "address-cap",
+      "title": "Count bounded address records in one response",
+      "description": "address_block requires identity before collection. A responses permit 64 records; width 16 selects the AAAA cap of 16. rr_count includes repeated records. Exceeding the cap marks the whole response invalid, increments address_rejected and stores that rejection in pending state.",
+      "ranges": [
+        {
+          "code": "function address_block(c: connection, msg: dns_msg, ans: dns_answer, a: addr, width: count)\n{\nif ( ! identity(c,msg,ans) ) return;\nlocal k = token(c,msg);\nlocal p = pending[k];\nlocal cap: count = 64;\nif ( width == 16 ) cap = 16;\n++p$rr_count;\nif ( p$rr_count > cap ) { p$invalid_response = T; ++address_rejected; pending[k] = p; return; }"
+        }
+      ],
+      "links": [
+        [
+          "response-reset",
+          "Reset collection for this response"
+        ],
+        [
+          "typed-address",
+          "Convert using native address words"
+        ]
+      ]
+    },
+    {
+      "id": "typed-address",
+      "title": "Convert native address words at the RR’s typed width",
+      "description": "addr_to_counts returns native 32 bit address words. An A record requires one word and formats it as exactly eight hex digits. An AAAA record joins four such words; when a mapped IPv6 value arrives as one word, the code restores its 00000000000000000000ffff prefix. Other shapes invalidate the response. The event’s width controls four versus sixteen bytes.",
+      "ranges": [
+        {
+          "code": "# BIF host-order 32-bit words, not rendered address text. RR type fixes width.\nlocal words = addr_to_counts(a);\nlocal h = \"\";\nif ( width == 4 && |words| == 1 ) h = fmt(\"%08x\",words[0]);\nelse if ( width == 16 && |words| == 4 )\nfor ( i in words ) h += fmt(\"%08x\",words[i]);\nelse if ( width == 16 && |words| == 1 )\nh = cat(\"00000000000000000000ffff\",fmt(\"%08x\",words[0]));\nelse { p$invalid_response = T; ++address_rejected; pending[k] = p; return; }"
+        }
+      ],
+      "links": [
+        [
+          "address-sequence",
+          "Separate the sequence octet"
+        ],
+        [
+          "address-events",
+          "Choose width from the native RR event"
+        ]
+      ]
+    },
+    {
+      "id": "address-sequence",
+      "title": "Separate sequence and payload octets",
+      "description": "hexstr_to_bytestring converts the fixed width words into bytes. b[0:1] supplies the unsigned sequence octet; b[1:] supplies the remaining three A or fifteen AAAA payload octets. The sequence becomes the block table key.",
+      "ranges": [
+        {
+          "code": "local b = hexstr_to_bytestring(h);\nlocal seq = bytestring_to_count(b[0:1]);\nlocal block = b[1:];"
+        }
+      ],
+      "links": [
+        [
+          "address-duplicates",
+          "Resolve repeated sequence values"
+        ]
+      ]
+    },
+    {
+      "id": "address-duplicates",
+      "title": "Accept identical blocks and reject conflicts",
+      "description": "For an already present sequence, identical bytes increment address_duplicates. Different bytes mark the response invalid and increment address_rejected. A new sequence stores its payload. The updated Pending record retains both blocks and rejection state until response completion.",
+      "ranges": [
+        {
+          "code": "if ( seq in p$blocks )\n{\nif ( p$blocks[seq] != block ) { p$invalid_response = T; ++address_rejected; }\nelse ++address_duplicates;\n}\nelse p$blocks[seq] = block;\npending[k] = p;"
+        }
+      ],
+      "links": [
+        [
+          "address-complete",
+          "Require a usable response block set"
+        ]
+      ]
+    },
+    {
+      "id": "address-complete",
+      "title": "Require a usable bounded response block set",
+      "description": "finish_address selects a cap of 64 and three payload bytes per A block, or 16 and fifteen for AAAA. An invalid response or an empty block table increments address_rejected and returns before reconstruction.",
+      "ranges": [
+        {
+          "code": "function finish_address(k: string)\n{\nlocal p = pending[k];\nlocal cap: count = 64;\nlocal width: count = 3;\nif ( p$qtype == 28 ) { cap = 16; width = 15; }\nif ( p$invalid_response || |p$blocks| == 0 ) { ++address_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "response-end",
+          "Finalize at dns_end"
+        ]
+      ]
+    },
+    {
+      "id": "address-start",
+      "title": "Require the supported sequence start range",
+      "description": "The decoder finds the smallest sequence value in the response. It rejects zero and values above 255 cap 1. With the selected caps this admits starts 1 through 190 for A and 1 through 238 for AAAA, matching the supported sender profile.",
+      "ranges": [
+        {
+          "code": "local first: count = 255;\nfor ( seq in p$blocks ) if ( seq < first ) first = seq;\nif ( first == 0 || first > 255-cap-1 ) { ++address_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "address-order",
+          "Require consecutive remaining blocks"
+        ]
+      ]
+    },
+    {
+      "id": "address-order",
+      "title": "Reassemble consecutive blocks in sequence order",
+      "description": "The loop reads `first+n` in consecutive sequence order. Every expected sequence must exist and be at most 253. Each unique payload block is appended once, so reordered records and identical duplicates reconstruct the same byte stream. A gap rejects the response.",
+      "ranges": [
+        {
+          "code": "local raw = \"\";\nlocal n: count = 0;\nwhile ( n < |p$blocks| )\n{\nif ( first+n !in p$blocks || first+n > 253 ) { ++address_rejected; return; }\nraw += p$blocks[first+n]; ++n;"
+        }
+      ],
+      "links": [
+        [
+          "address-length",
+          "Read the single byte message length"
+        ]
+      ]
+    },
+    {
+      "id": "address-length",
+      "title": "Validate the declared length and padding amount",
+      "description": "The first reconstructed octet declares message length. The guard bounds that length by cap*width 1 and max_frame_bytes, requires all declared bytes to exist, and allows less than one payload block of trailing padding. Rejected lengths increment address_rejected.",
+      "ranges": [
+        {
+          "code": "local length = bytestring_to_count(raw[0:1]);\nif ( length > cap*width-1 || length > max_frame_bytes || length+1 > |raw| || |raw|-length-1 >= width )\n{ ++address_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "address-trim",
+          "Trim padding and parse exactly the declared message"
+        ]
+      ]
+    },
+    {
+      "id": "address-trim",
+      "title": "Trim arbitrary padding values after the message",
+      "description": "The receiver accepts arbitrary padding byte values. raw[1:length+1] selects exactly the declared message after its length octet; bytestring_to_hexstr feeds the common parser. The same decoded reply is delivered against each retained request boundary.",
+      "ranges": [
+        {
+          "code": "# v0.07 protocol and client driver ignore padding values. Validate only the\n# declared length and less-than-one-block padding amount above, then trim.\n# The pinned Ruby encoder happens to use FF, but that is not a receiver rule.\nlocal r = parse_hex(bytestring_to_hexstr(raw[1:length+1]));\nfor ( i in p$frames ) deliver(k,p$frames[i],r);"
+        }
+      ],
+      "links": [
+        [
+          "hex-input",
+          "Apply common envelope checks"
+        ],
+        [
+          "address-length",
+          "Bound the amount of trailing padding"
+        ]
+      ]
+    },
+    {
+      "id": "dns-message",
+      "title": "Gate direction, status and question count",
+      "description": "dns_message invokes sweep and sets dnc_message_ok only for opcode zero, successful rcode zero, a complete message with TC clear, exactly one question and the expected originator query or responder reply direction. Later callbacks share this current message gate.",
+      "ranges": [
+        {
+          "code": "event dns_message(c: connection, is_orig: bool, msg: dns_msg, len: count)\n{\nsweep();\nc$dnc_message_ok = msg$opcode == 0 && msg$rcode == 0 && ! msg$TC && msg$num_queries == 1 && ((is_orig && ! msg$QR) || (! is_orig && msg$QR));"
+        }
+      ],
+      "links": [
+        [
+          "request-type",
+          "Select the supported query types"
+        ],
+        [
+          "answer-gate",
+          "Require the gate before answer data"
+        ]
+      ]
+    },
+    {
+      "id": "response-reset",
+      "title": "Reset collection at each response boundary",
+      "description": "For a response with pending state, `question_ok` and `invalid_response` reset before question validation. `blocks` becomes an empty table and `rr_count` becomes zero. The new collection belongs to this response, and `dns_end` consumes the pending transaction after decoding.",
+      "ranges": [
+        {
+          "code": "local k = token(c,msg);\nif ( msg$QR && k in pending )\n{\npending[k]$question_ok = F;\npending[k]$invalid_response = F;\npending[k]$blocks = table(); pending[k]$rr_count = 0;"
+        }
+      ],
+      "links": [
+        [
+          "reply-question",
+          "Reestablish question identity"
+        ],
+        [
+          "response-end",
+          "Consume collection at message end"
+        ]
+      ]
+    },
+    {
+      "id": "request-type",
+      "title": "Admit IN queries for five actual RR carriers",
+      "description": "dns_request counts the callback, then requires the current message gate and IN class. qtype must be TXT 16, CNAME 5, MX 15, A 1 or AAAA 28. The connection uid and DNS ID form the pending token; sha256_hash(query) retains the analyzer provided request spelling as a fingerprint.",
+      "ranges": [
+        {
+          "code": "event dns_request(c: connection, msg: dns_msg, query: string, qtype: count, qclass: count)\n{\n++queries;\nif ( ! c$dnc_message_ok || qclass != 1 || (qtype != 16 && qtype != 5 && qtype != 15 && qtype != 1 && qtype != 28) ) return;\nlocal k = token(c,msg);\nlocal qhash = sha256_hash(query);"
+        }
+      ],
+      "links": [
+        [
+          "reply-question",
+          "Compare the lowercase reply question fingerprint"
+        ]
+      ]
+    },
+    {
+      "id": "request-retry",
+      "title": "Handle a reused pending DNS token",
+      "description": "An expired token is removed. A live token with the same question fingerprint and qtype increments retries and returns, preserving its original request time and binding. A conflicting question or type removes the old pending entry and increments pairing_rejected before new admission.",
+      "ranges": [
+        {
+          "code": "if ( k in pending )\n{\nif ( network_time() - pending[k]$at >= pending_ttl ) { remove_pending(k); ++pending_expiry; }\nelse if ( pending[k]$question_hash == qhash && pending[k]$qtype == qtype ) { ++retries; return; }\nelse { remove_pending(k); ++pairing_rejected; }"
+        }
+      ],
+      "links": [
+        [
+          "remove-pending",
+          "Keep FIFO links consistent"
+        ],
+        [
+          "pending-priority",
+          "Store the newly admitted request"
+        ]
+      ]
+    },
+    {
+      "id": "new-transaction-token",
+      "title": "Give a fresh DNS transaction its own observation token",
+      "description": "After expired or conflicting pending state is handled, transaction_serial increments. observation_token combines the connection/DNS token with that serial. A live same question retry returns earlier and keeps the original serial and admission time.",
+      "ranges": [
+        {
+          "code": "++transaction_serial;\nlocal observation_token = fmt(\"%s|%d\",k,transaction_serial);"
+        }
+      ],
+      "links": [
+        [
+          "request-retry",
+          "Return early for a live retry"
+        ],
+        [
+          "pending-priority",
+          "Retain the serial and observation token"
+        ]
+      ]
+    },
+    {
+      "id": "normalize-requests",
+      "title": "Admit each normalized request boundary",
+      "description": "Each normalized boundary becomes an Observation carrying the actual DNS ID, current transaction serial and observation token. dispatch_observation returns the admitted Frame synchronously in standalone mode. Valid returned frames enter fs; any progressed Frame gives the transaction progressed priority. Zero admitted frames end this request path.",
+      "ranges": [
+        {
+          "code": "local fs: Frames = vector();\nlocal normalized = candidates(query);\nlocal progressed = F;\nfor ( i in normalized )\n{\nlocal o: Observation = [$peers=c$id,$uid=c$uid,$token=observation_token,$dns_id=msg$id,$serial=transaction_serial,$scope=observation_scope,$at=network_time(),$qtype=qtype,$question_hash=qhash,$request=normalized[i]];\nlocal f = dispatch_observation(o);\nif ( f$valid ) { fs[|fs|] = f; if ( f$progressed ) progressed = T; }\n}\n# Alternative hex-label boundaries are candidates, not failed pairings. Count\n# missing request context only when none of the normalized choices was admitted.\nif ( |fs| == 0 ) { if ( |normalized| > 0 ) ++pairing_rejected; return; }"
+        }
+      ],
+      "links": [
+        [
+          "bind-candidate",
+          "Bind candidate epochs"
+        ],
+        [
+          "bind-progressed",
+          "Bind existing progressed state"
+        ],
+        [
+          "pending-priority",
+          "Capture the selected priority"
+        ]
+      ]
+    },
+    {
+      "id": "pending-cap",
+      "title": "Prefer eligible unanswered pending entries at capacity",
+      "description": "At `max_pending`, `pending_head` directly selects the oldest eligible unanswered transaction. Its eviction uses the embedded FIFO links. If all pending entries have progressed priority, admission refuses the new request. A zero budget also refuses. Evictions and refusals update their counters and `coverage_degraded`.",
+      "ranges": [
+        {
+          "code": "if ( |pending| >= max_pending )\n{\nif ( pending_head != \"\" ) { remove_pending(pending_head); ++pending_evictions; ++coverage_degraded; }\nelse { ++pending_overflow; ++coverage_degraded; return; }\n}\nif ( max_pending == 0 ) { ++pending_overflow; ++coverage_degraded; return; }"
+        }
+      ],
+      "links": [
+        [
+          "pending-fifo",
+          "Identify FIFO eligible requests"
+        ],
+        [
+          "capacity-settings",
+          "Configure the pending limit"
+        ]
+      ]
+    },
+    {
+      "id": "pending-priority",
+      "title": "Capture pending priority at request admission",
+      "description": "Pending retains observation_token, actual DNS ID and serial alongside request time, endpoints, question identity and bound frames. queued=!progressed captures admission time FIFO eligibility. Promotion leaves earlier pending references in their original class.",
+      "ranges": [
+        {
+          "code": "local p: Pending = [$at=network_time(),$peers=c$id,$uid=c$uid,$observation_token=observation_token,$dns_id=msg$id,$serial=transaction_serial,$question_hash=qhash,$qtype=qtype,$frames=fs,$queued=!progressed];"
+        }
+      ],
+      "links": [
+        [
+          "pending-fifo",
+          "Link the eligible pending entry"
+        ],
+        [
+          "promote-store",
+          "Keep promotion independent of pending reference scans"
+        ]
+      ]
+    },
+    {
+      "id": "pending-fifo",
+      "title": "Append unanswered pending requests to the FIFO",
+      "description": "An unanswered request appends through `pending_tail`; the first also sets `pending_head`. These operations update a fixed number of links. Every admitted entry is stored in `pending`, increments `pending_admissions` and can raise `peak_pending`. Admission time captures FIFO eligibility.",
+      "ranges": [
+        {
+          "code": "if ( ! progressed )\n{\np$prev_link = pending_tail;\nif ( pending_tail != \"\" ) pending[pending_tail]$next_link = k;\nelse pending_head = k;\npending_tail = k;\n}\npending[k] = p; ++pending_admissions;\nif ( |pending| > peak_pending ) peak_pending = |pending|;"
+        }
+      ],
+      "links": [
+        [
+          "remove-pending",
+          "Unlink before removal"
+        ],
+        [
+          "pending-cap",
+          "Evict the oldest eligible pending entry"
+        ]
+      ]
+    },
+    {
+      "id": "reply-question",
+      "title": "Validate the reply’s echoed question",
+      "description": "dns_query_reply finds the pending token, then requires the current message gate, IN class, requested qtype and a lowercase question hash matching the retained request hash. Failure sets invalid_response and increments pairing_rejected. The echoed question establishes identity; actual RR data supplies the reply Frame.",
+      "ranges": [
+        {
+          "code": "event dns_query_reply(c: connection, msg: dns_msg, query: string, qtype: count, qclass: count)\n{\nlocal k = token(c,msg);\nif ( k !in pending ) return;\npending[k]$question_ok = c$dnc_message_ok && qclass == 1 && qtype == pending[k]$qtype && sha256_hash(to_lower(query)) == pending[k]$question_hash;\nif ( ! pending[k]$question_ok ) { pending[k]$invalid_response = T; ++pairing_rejected; }"
+        }
+      ],
+      "links": [
+        [
+          "answer-identity",
+          "Apply owner, section, class and type checks"
+        ],
+        [
+          "deliver-pair",
+          "Use the actual decoded answer"
+        ]
+      ]
+    },
+    {
+      "id": "txt-event",
+      "title": "Join bounded TXT character strings as raw hex",
+      "description": "`dns_TXT_reply` requires a pending token and sums the character string lengths. It rejects totals above `2*max_frame_bytes`, then joins the strings with an empty separator. Passing `T` to `answer` selects raw hexadecimal payload parsing.",
+      "ranges": [
+        {
+          "code": "event dns_TXT_reply(c: connection, msg: dns_msg, ans: dns_answer, strs: string_vec)\n{\nif ( token(c,msg) !in pending ) return;\nlocal n: count = 0;\nfor ( i in strs ) { n += |strs[i]|; if ( n > 2*max_frame_bytes ) { ++structure_rejected; return; } }\nanswer(c,msg,ans,join_string_vec(strs,\"\"),T);"
+        }
+      ],
+      "links": [
+        [
+          "answer-parse",
+          "Decode the concatenated server frame"
+        ]
+      ]
+    },
+    {
+      "id": "cname-event",
+      "title": "Decode the CNAME target as a wrapped name",
+      "description": "dns_CNAME_reply passes the actual target name to answer with is_txt=F. The shared name path enforces the admitted suffix or explicit tag before hexadecimal parsing.",
+      "ranges": [
+        {
+          "code": "event dns_CNAME_reply(c: connection, msg: dns_msg, ans: dns_answer, name: string)\n{ answer(c,msg,ans,name,F); }"
+        }
+      ],
+      "links": [
+        [
+          "name-answer",
+          "Apply wrapper and suffix checks"
+        ]
+      ]
+    },
+    {
+      "id": "mx-event",
+      "title": "Decode the MX exchange name and ignore preference",
+      "description": "`dns_MX_reply` receives the exchange name and preference. It passes `name` to the same wrapped name decoder used by CNAME, with `is_txt=F`. The exchange name supplies the message bytes; preference retains its DNS mail ranking meaning.",
+      "ranges": [
+        {
+          "code": "event dns_MX_reply(c: connection, msg: dns_msg, ans: dns_answer, name: string, preference: count)\n{ answer(c,msg,ans,name,F); }"
+        }
+      ],
+      "links": [
+        [
+          "name-answer",
+          "Decode the shared name wrapper"
+        ]
+      ]
+    },
+    {
+      "id": "address-events",
+      "title": "Select A or AAAA width from the native event",
+      "description": "dns_A_reply passes a typed address and width 4. dns_AAAA_reply passes width 16. These widths choose record cap, native word conversion and payload size independently of an address’s rendered text or a mapped address’s internal word count.",
+      "ranges": [
+        {
+          "code": "event dns_A_reply(c: connection, msg: dns_msg, ans: dns_answer, a: addr)\n{ address_block(c,msg,ans,a,4); }\nevent dns_AAAA_reply(c: connection, msg: dns_msg, ans: dns_answer, a: addr)\n{ address_block(c,msg,ans,a,16); }"
+        }
+      ],
+      "links": [
+        [
+          "typed-address",
+          "Convert fixed width address bytes"
+        ],
+        [
+          "address-cap",
+          "Apply the response RR limit"
+        ]
+      ]
+    },
+    {
+      "id": "response-end",
+      "title": "Finish address assembly and remove the request",
+      "description": "At `dns_end`, an A or AAAA response is reassembled from the blocks retained for that transaction. `remove_pending` then consumes the transaction for every carrier, releasing its frame vector and response block table. The RR caps and response lifetime bound collection.",
+      "ranges": [
+        {
+          "code": "event dns_end(c: connection, msg: dns_msg)\n{\nlocal k = token(c,msg);\nif ( msg$QR && k in pending )\n{\nif ( pending[k]$qtype == 1 || pending[k]$qtype == 28 ) finish_address(k);\nremove_pending(k);"
+        }
+      ],
+      "links": [
+        [
+          "address-complete",
+          "Check the collected address blocks"
+        ],
+        [
+          "remove-pending",
+          "Unlink consumed pending state"
+        ]
+      ]
+    },
+    {
+      "id": "health-start",
+      "title": "Prepare exit time queue diagnostics",
+      "description": "zeek_done initializes candidate and pending queue counts and queue_errors, then starts at candidate_head. These diagnostics inspect the actual embedded links at exit; the module’s aggregate report is emitted after the traversals.",
+      "ranges": [
+        {
+          "code": "event zeek_done()\n{\nlocal cq: count = 0;\nlocal pq: count = 0;\nlocal queue_errors: count = 0;\nlocal current = candidate_head;\nlocal previous = \"\";"
+        }
+      ],
+      "links": [
+        [
+          "health-candidate-queue",
+          "Check candidate FIFO structure"
+        ]
+      ]
+    },
+    {
+      "id": "health-candidate-queue",
+      "title": "Check the candidate FIFO against its table",
+      "description": "The bounded walk requires each candidate link to reference a table entry and each back link to equal the previous key. It compares visited count and final tail with candidate_states. Any broken link, count mismatch or unfinished traversal increments queue_errors.",
+      "ranges": [
+        {
+          "code": "while ( current != \"\" && cq <= |candidate_states| )\n{\nif ( current !in candidate_states ) { ++queue_errors; break; }\nif ( candidate_states[current]$prev_link != previous ) ++queue_errors;\nprevious = current; current = candidate_states[current]$next_link; ++cq;\n}\nif ( current != \"\" || cq != |candidate_states| || previous != candidate_tail ) ++queue_errors;"
+        }
+      ],
+      "links": [
+        [
+          "remove-candidate",
+          "Maintain the candidate links"
+        ]
+      ]
+    },
+    {
+      "id": "health-pending-queue",
+      "title": "Check the eligible pending FIFO separately",
+      "description": "The pending walk checks membership, `queued` eligibility and predecessor links. `expected` counts FIFO eligible entries; progressed priority entries remain in the pending table. Queue count, tail and traversal mismatches increment `queue_errors`.",
+      "ranges": [
+        {
+          "code": "current = pending_head; previous = \"\";\nwhile ( current != \"\" && pq <= |pending| )\n{\nif ( current !in pending ) { ++queue_errors; break; }\nif ( ! pending[current]$queued || pending[current]$prev_link != previous ) ++queue_errors;\nprevious = current; current = pending[current]$next_link; ++pq;\n}\nlocal expected: count = 0;\nfor ( key in pending ) if ( pending[key]$queued ) ++expected;\nif ( current != \"\" || pq != expected || previous != pending_tail ) ++queue_errors;"
+        }
+      ],
+      "links": [
+        [
+          "pending-priority",
+          "Select FIFO eligibility at admission"
+        ],
+        [
+          "remove-pending",
+          "Maintain pending links"
+        ]
+      ]
+    },
+    {
+      "id": "health-output",
+      "title": "Emit one aggregate health object at exit",
+      "description": "The exit print writes a compact JSON object to standard output. It includes parser and pairing counts, admissions, expiry, evictions, capacity drops, epoch and address outcomes, retries, FINs, Notices, current occupancy, peaks, configured limits and actual queue counts/errors. coverage_degraded aggregates capacity loss; separate expiry counters report age cleanup. Counter increments describe paths and can overlap for one observation.",
+      "ranges": [
+        {
+          "code": "print fmt(\"{\\\"module\\\":\\\"DNScat2\\\",\\\"queries\\\":%d,\\\"boundary_attempts\\\":%d,\\\"valid_frames\\\":%d,\\\"structure_rejected\\\":%d,\\\"pairing_rejected\\\":%d,\\\"pending_admissions\\\":%d,\\\"candidate_admissions\\\":%d,\\\"session_admissions\\\":%d,\\\"pending_overflow\\\":%d,\\\"session_overflow\\\":%d,\\\"pending_expiry\\\":%d,\\\"candidate_expiry\\\":%d,\\\"session_expiry\\\":%d,\\\"candidate_evictions\\\":%d,\\\"pending_evictions\\\":%d,\\\"tombstone_evictions\\\":%d,\\\"candidate_replacements\\\":%d,\\\"epoch_rejected\\\":%d,\\\"coverage_degraded\\\":%d,\\\"retries\\\":%d,\\\"notices\\\":%d,\\\"fins\\\":%d,\\\"address_rejected\\\":%d,\\\"address_duplicates\\\":%d,\\\"pending\\\":%d,\\\"candidates\\\":%d,\\\"sessions\\\":%d,\\\"peak_pending\\\":%d,\\\"peak_candidates\\\":%d,\\\"peak_sessions\\\":%d,\\\"limit_pending\\\":%d,\\\"limit_candidates\\\":%d,\\\"limit_sessions\\\":%d,\\\"candidate_queue\\\":%d,\\\"pending_queue\\\":%d,\\\"queue_errors\\\":%d}\",queries,boundary_attempts,valid_frames,structure_rejected,pairing_rejected,pending_admissions,candidate_admissions,session_admissions,pending_overflow,session_overflow,pending_expiry,candidate_expiry,session_expiry,candidate_evictions,pending_evictions,tombstone_evictions,candidate_replacements,epoch_rejected,coverage_degraded,retries,notices,fins,address_rejected,address_duplicates,|pending|,|candidate_states|,|sessions|,peak_pending,peak_candidates,peak_sessions,max_pending,max_candidates,max_sessions,cq,pq,queue_errors);"
+        }
+      ],
+      "links": [
+        [
+          "budget-counters",
+          "Read admissions, refusal and expiry counters"
+        ],
+        [
+          "lifecycle-counters",
+          "Read capacity loss and epoch counters"
+        ],
+        [
+          "health-candidate-queue",
+          "Interpret candidate_queue and queue_errors"
+        ],
+        [
+          "health-pending-queue",
+          "Interpret pending_queue"
+        ]
+      ]
+    },
+    {
+      "id": "epoch-through-promotion",
+      "title": "Follow one generation through admission and promotion",
+      "description": "Candidate admission assigns a new generation. Pending frames copy that generation and original key, every paired kind compares both, and promotion moves the same record into sessions. These exact assignments and guards keep a late old generation reply from updating the replacement epoch.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "++next_generation; ++candidate_admissions;"
+        },
+        {
+          "code": "f$generation = candidate_states[f$context]$generation;\nf$initial_key_hash = candidate_states[f$context]$client_key;"
+        },
+        {
+          "code": "if ( q$generation != s$generation || q$initial_key_hash != s$client_key )\n{ ++pairing_rejected; ++epoch_rejected; return; }"
+        },
+        {
+          "code": "sessions[k] = s;"
+        }
+      ],
+      "links": [
+        [
+          "replace-candidate",
+          "Revoke an unanswered key before its old reply"
+        ],
+        [
+          "promote-store",
+          "Preserve the generation during promotion"
+        ]
+      ]
+    },
+    {
+      "id": "typed-block-framing",
+      "title": "Follow typed address bytes into the declared message",
+      "description": "The RR event selects the byte width, fixed width native words produce bytes, the first byte of each record becomes its sequence, and the first reconstructed payload byte becomes the message length. The final slice removes both that length byte and bounded trailing padding.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "{ address_block(c,msg,ans,a,4); }"
+        },
+        {
+          "code": "{ address_block(c,msg,ans,a,16); }"
+        },
+        {
+          "code": "local words = addr_to_counts(a);"
+        },
+        {
+          "code": "local seq = bytestring_to_count(b[0:1]);\nlocal block = b[1:];"
+        },
+        {
+          "code": "local length = bytestring_to_count(raw[0:1]);"
+        },
+        {
+          "code": "local r = parse_hex(bytestring_to_hexstr(raw[1:length+1]));"
+        }
+      ],
+      "links": [
+        [
+          "typed-address",
+          "Read typed width conversion details"
+        ],
+        [
+          "address-length",
+          "Read length and padding guards"
+        ]
+      ]
+    }
+  ],
+  "notice": {
+    "msg": [
+      "dnscat2 DNS session pattern observed: paired negotiation and session-start messages followed by two-way session traffic"
+    ],
+    "sub": [
+      "evidence=ENC_INIT,SYN,MSG; peer_keys=distinct; dns_request_reply=matched; suffix=",
+      {
+        "token": "%s",
+        "label": "DNS suffix",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=ENC_INIT,SYN,MSG; peer_keys=distinct; dns_request_reply=matched; suffix=%s; sid=%s\",q$suffix,q$sid),$identifier=q$context,$suppress_for=0sec]);",
+            "text": "q$suffix"
+          }
+        ]
+      },
+      "; sid=",
+      {
+        "token": "%s",
+        "label": "Session identifier",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=ENC_INIT,SYN,MSG; peer_keys=distinct; dns_request_reply=matched; suffix=%s; sid=%s\",q$suffix,q$sid),$identifier=q$context,$suppress_for=0sec]);",
+            "text": "q$sid"
+          }
+        ]
+      }
+    ]
+  }
+}

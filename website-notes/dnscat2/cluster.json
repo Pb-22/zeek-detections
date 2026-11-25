@@ -1,0 +1,1857 @@
+{
+  "schema_version": 1,
+  "path": "scripts/dnscat2/cluster.zeek",
+  "title": "Optional finite PCAP dnscat2 cluster adapter",
+  "description": "Coordinates one fixed assigned PCAP window through native Broker workers, HRW owners and a manager. Both sources finish and pass EOS, stream, semantic and ACK checks before shared state reduction. Source timestamps describe evidence time; findings are emitted during the later finite batch. Explicit finite_mode and assigned trace inputs are required; default startup disables live operation.",
+  "tags": [
+    "DNS",
+    "dnscat2",
+    "Broker",
+    "finite PCAP",
+    "optional adapter"
+  ],
+  "initialTopic": "finite-startup",
+  "topics": [
+    {
+      "id": "optional-loads",
+      "title": "Load the optional finite input Broker adapter",
+      "description": "@load selects the cluster framework, native Broker backend and adjacent main module. main remains independently loadable. This adapter coordinates one fixed, assigned finite PCAP window; the shared main module supplies DNS normalization and the session state machine.",
+      "ranges": [
+        {
+          "code": "@load base/frameworks/cluster\n@load policy/frameworks/cluster/backend/broker\n@load ./main"
+        }
+      ],
+      "links": [
+        [
+          "finite-startup",
+          "Require explicit finite trace operation"
+        ],
+        [
+          "shared-pair",
+          "Invoke the shared main lifecycle"
+        ]
+      ]
+    },
+    {
+      "id": "job-log-settings",
+      "title": "Apply process wide finite job lifetime and log settings",
+      "description": "exit_only_after_terminate keeps the process alive for EOF drain and acknowledgements. Rotation interval zero and an empty postprocessor command disable scheduled rotation/postprocessing; LogAscii::use_json selects JSON log output. These global redefs affect the whole dedicated finite job process.",
+      "ranges": [
+        {
+          "code": "redef exit_only_after_terminate = T;\nredef Log::default_rotation_interval = 0secs;\nredef Log::default_rotation_postprocessor_cmd = \"\";\nredef LogAscii::use_json = T;"
+        }
+      ],
+      "links": [
+        [
+          "finish",
+          "Terminate after window completion"
+        ],
+        [
+          "notice-filter",
+          "Forward the standard Notice filter selectively"
+        ]
+      ]
+    },
+    {
+      "id": "remote-log-policy",
+      "title": "Keep default raw log forwarding disabled",
+      "description": "Log::enable_remote_logging=F disables default remote log forwarding. DNCCluster scopes the adapter declarations. A later proxy specific initialization step enables only the existing Notice filter for remote forwarding.",
+      "ranges": [
+        {
+          "code": "redef Log::enable_remote_logging = F;\nmodule DNCCluster;\nexport {"
+        }
+      ],
+      "links": [
+        [
+          "notice-filter",
+          "Enable the selected security output"
+        ]
+      ]
+    },
+    {
+      "id": "finite-mode",
+      "title": "Require explicit finite mode",
+      "description": "finite_mode defaults to F and is redefinable. Startup emits LIVE_CLUSTER_DISABLED and terminates unless the process is configured for the finite assigned input contract. A finite worker also requires trace input.",
+      "ranges": [
+        {
+          "code": "const finite_mode = F &redef;"
+        }
+      ],
+      "links": [
+        [
+          "finite-startup",
+          "Enforce the mode at initialization"
+        ]
+      ]
+    },
+    {
+      "id": "buffer-limits",
+      "title": "Bound worker facts, owner facts and query tokens",
+      "description": "`max_worker_facts` bounds each worker buffer at 2048 observations by default. Owners retain at most 4096 facts and 4096 distinct query bindings. These metadata budgets bound one finite window’s storage and precommit scans. Overflow marks the window incomplete before authorized reduction.",
+      "ranges": [
+        {
+          "code": "const max_worker_facts = 2048 &redef;\nconst max_owner_facts = 4096 &redef;\nconst max_tokens = 4096 &redef;"
+        }
+      ],
+      "links": [
+        [
+          "source-overflow",
+          "Latch worker overflow"
+        ],
+        [
+          "fact-store",
+          "Bound owner receipt storage"
+        ],
+        [
+          "semantic-cap",
+          "Check token budgets before commit"
+        ]
+      ]
+    },
+    {
+      "id": "configured-members",
+      "title": "Name the fixed worker and owner sets",
+      "description": "expected_workers defaults to `worker-0` and `worker-1`; expected_owners defaults to `proxy-0` and `proxy-1`. These strings identify configured cluster roles and fixed view membership. The sequential source option also uses the `worker-0` and `worker-1` names explicitly.",
+      "ranges": [
+        {
+          "code": "const expected_workers: set[string] = { \"worker-0\", \"worker-1\" } &redef;\nconst expected_owners: set[string] = { \"proxy-0\", \"proxy-1\" } &redef;"
+        }
+      ],
+      "links": [
+        [
+          "membership-freeze",
+          "Freeze native incarnations"
+        ],
+        [
+          "sequential-release",
+          "Release the configured second source after ACKs"
+        ]
+      ]
+    },
+    {
+      "id": "allowed-scopes",
+      "title": "Select allowed observation namespaces",
+      "description": "allowed_scopes contains the permitted observation scope labels. The defaults are `site-1`, `scope-a`, `scope-b` and local. These configuration labels partition observed views; protocol envelopes, pairing and session progression provide the traffic evidence.",
+      "ranges": [
+        {
+          "code": "const allowed_scopes: set[string] = { \"site-1\", \"scope-a\", \"scope-b\", \"local\" } &redef;"
+        }
+      ],
+      "links": [
+        [
+          "owner-key",
+          "Include scope in the typed owner key"
+        ],
+        [
+          "fact-metadata-bounds",
+          "Validate the incoming scope"
+        ]
+      ]
+    },
+    {
+      "id": "worker-input-settings",
+      "title": "Bind a worker to its assigned packet inventory",
+      "description": "expected_packets and input_hash describe the worker’s assigned immutable input. sequential_sources controls transport release order after readiness. Its operational scheduling changes when a source is released, while source times and EOS determine reduction order and completeness.",
+      "ranges": [
+        {
+          "code": "const expected_packets: count = 0 &redef;\nconst input_hash = \"\" &redef;\n# Operational transport scheduling only; never a source watermark.\nconst sequential_sources = F &redef;"
+        }
+      ],
+      "links": [
+        [
+          "native-eof",
+          "Check native packet count and EOF"
+        ],
+        [
+          "source-order",
+          "Sort the complete source observations"
+        ]
+      ]
+    },
+    {
+      "id": "input-record",
+      "title": "Describe fixed source contents and time bounds",
+      "description": "Input holds packet count, supplied hash, a has_data flag and first/last source times. assigned_inputs maps worker names to those records. The configured runner binds actual file bytes and monotonic capture bounds; the adapter compares native observations with this declared inventory.",
+      "ranges": [
+        {
+          "code": "type Input: record {\npackets: count;\nhash: string;\nhas_data: bool;\nfirst: time;\nlast: time;\n};\nconst assigned_inputs: table[string] of Input = table() &redef;"
+        }
+      ],
+      "links": [
+        [
+          "eos-input",
+          "Compare the native close receipt with its assignment"
+        ],
+        [
+          "fact-time-bounds",
+          "Constrain source times to the assigned input"
+        ]
+      ]
+    },
+    {
+      "id": "view-record",
+      "title": "Carry fixed membership and source assignments together",
+      "description": "View joins an id, node name to incarnation table and worker input table. The manager distributes this record once the configured native membership is ready. Receivers use its identities and inputs to validate the finite window.",
+      "ranges": [
+        {
+          "code": "type View: record {\nid: string;\nnodes: table[string] of string;\ninputs: table[string] of Input;"
+        }
+      ],
+      "links": [
+        [
+          "membership-freeze",
+          "Construct the fixed view"
+        ],
+        [
+          "install-view",
+          "Validate the received view"
+        ]
+      ]
+    },
+    {
+      "id": "owner-key",
+      "title": "Define the typed stable correlation key",
+      "description": "Key contains schema version 1, observation scope, client/server addresses, typed server port, wrapper form, suffix and wire SID. HRW uses this typed record to route related observations. Worker identity and transaction identity stay in the fact envelope.",
+      "ranges": [
+        {
+          "code": "type Key: record {\nschema_version: count &default=1;\nscope: string;\nclient: addr;\nserver: addr;\nserver_port: port;\nwrapper: string;\nsuffix: string;\nsid: string;"
+        }
+      ],
+      "links": [
+        [
+          "key-builder",
+          "Derive the key from normalized metadata"
+        ],
+        [
+          "hrw-route",
+          "Choose the corresponding owner"
+        ]
+      ]
+    },
+    {
+      "id": "fact-envelope",
+      "title": "Bind a fact to worker, view and owner incarnations",
+      "description": "Fact carries the stable key, worker name and incarnation, fixed view id, selected owner topic and incarnation, and per owner sequence. These fields distinguish routing membership from the session key and let receipts reject a changed or mismatched destination.",
+      "ranges": [
+        {
+          "code": "type Fact: record {\nkey: Key;\nworker: string;\nincarnation: string;\nview_id: string;\nowner_topic: string;\nowner_incarnation: string;\nseq: count;"
+        }
+      ],
+      "links": [
+        [
+          "fact-view",
+          "Validate the source and target identities"
+        ],
+        [
+          "outgoing-fact",
+          "Construct the actual transport envelope"
+        ]
+      ]
+    },
+    {
+      "id": "fact-times",
+      "title": "Preserve native source seconds alongside the observation",
+      "description": "`query_seconds` and `event_seconds` preserve native callback values as doubles. `token` identifies the namespaced transaction, and `o` carries compact Observation metadata. Owners reconstruct source time from those doubles before ordering and reduction, retaining the callback precision used by the shared lifecycle.",
+      "ranges": [
+        {
+          "code": "# Broker time_point conversion can round an epoch double by an ULP.\n# Native source seconds as doubles preserve the callback value exactly.\nquery_seconds: double;\nevent_seconds: double;\ntoken: string;\no: DNScat2::Observation;\n};\ntype Facts: vector of Fact;"
+        }
+      ],
+      "links": [
+        [
+          "restore-times",
+          "Restore native callback times on receipt"
+        ],
+        [
+          "source-clock",
+          "Supply source time to the shared lifecycle"
+        ]
+      ]
+    },
+    {
+      "id": "eos-identity",
+      "title": "Name the closed per worker, per owner stream",
+      "description": "EOS identifies worker/incarnation, fixed view and destination owner. last_seq declares the final sequence number for that owner’s stream, including zero when the source sent that owner zero facts.",
+      "ranges": [
+        {
+          "code": "type EOS: record {\nworker: string;\nincarnation: string;\nview_id: string;\nowner: string;\nlast_seq: count;"
+        }
+      ],
+      "links": [
+        [
+          "eos-send",
+          "Send a close receipt to every owner"
+        ],
+        [
+          "contiguous-stream",
+          "Require every declared sequence"
+        ]
+      ]
+    },
+    {
+      "id": "eos-inventory",
+      "title": "Describe source completion and observation bounds",
+      "description": "EOS also retains packet count, supplied input hash, has_observation, first/last source times and complete. A genuinely empty input carries a false observation flag. Owners compare this receipt with the fixed assignment before preparing.",
+      "ranges": [
+        {
+          "code": "packets: count;\nhash: string;\nhas_observation: bool;\nfirst: time;\nlast: time;\ncomplete: bool;"
+        }
+      ],
+      "links": [
+        [
+          "eos-input",
+          "Check the assigned source inventory"
+        ]
+      ]
+    },
+    {
+      "id": "source-events",
+      "title": "Declare source, view and transport events",
+      "description": "The event interfaces carry post EOF handoff, Fact, EOS, installed View, node readiness and source release. They separate actual source closure, routing setup and observation transport.",
+      "ranges": [
+        {
+          "code": "global after_eof: event();\nglobal fact: event(f: Fact);\nglobal eos: event(e: EOS);\nglobal install_view: event(v: View);\nglobal ready_ack: event(node: string, incarnation: string, view_id: string);\nglobal start_source: event(worker: string, view_id: string);"
+        }
+      ],
+      "links": [
+        [
+          "after-eof",
+          "Seal only after native EOF handling"
+        ],
+        [
+          "ready-view",
+          "Wait for fixed view acknowledgements"
+        ]
+      ]
+    },
+    {
+      "id": "ack-events",
+      "title": "Declare receipt and preparation acknowledgements",
+      "description": "fact_ack and eos_ack return owner receipts to workers. ack_seen conveys those receipts to the manager, while prepared supplies each owner’s complete flag and fact count. Publication acceptance and these observed acknowledgements are separate stages.",
+      "ranges": [
+        {
+          "code": "global fact_ack: event(owner: string, seq: count, accepted: bool);\nglobal eos_ack: event(owner: string, last_seq: count);\nglobal ack_seen: event(worker: string, incarnation: string, owner: string, seq: count, is_eos: bool);\nglobal prepared: event(owner: string, incarnation: string, view_id: string, complete: bool, n: count);"
+        }
+      ],
+      "links": [
+        [
+          "fact-ack",
+          "Forward the owner receipt"
+        ],
+        [
+          "manager-gate",
+          "Wait for votes and ACK inventory"
+        ]
+      ]
+    },
+    {
+      "id": "commit-events",
+      "title": "Declare commit, completion and failure controls",
+      "description": "commit_window authorizes shared lifecycle reduction for a view. owner_done reports an owner’s reduction completion; failure and finish coordinate an incomplete or completed finite job shutdown.",
+      "ranges": [
+        {
+          "code": "global commit_window: event(view_id: string);\nglobal owner_done: event(owner: string, incarnation: string, view_id: string, n: count);\nglobal failure: event(node: string, view_id: string, reason: string);\nglobal finish: event();"
+        }
+      ],
+      "links": [
+        [
+          "commit-guard",
+          "Enter reduction once per authorized owner"
+        ],
+        [
+          "window-failure",
+          "Drain an operational failure"
+        ]
+      ]
+    },
+    {
+      "id": "publication-hooks",
+      "title": "Expose redefineable publication and ordering hooks",
+      "description": "publish_fact returns transport publication acceptance, and publication_order returns the outgoing Fact vector. Both are marked &redef. Native defaults use HRW publication and preserve the vector’s order.",
+      "ranges": [
+        {
+          "code": "global publish_fact: function(f: Fact): bool &redef;\nglobal publication_order: function(f: Facts): Facts &redef;"
+        }
+      ],
+      "links": [
+        [
+          "native-publish",
+          "Select the native defaults"
+        ]
+      ]
+    },
+    {
+      "id": "trace-identity",
+      "title": "Label local diagnostic receipts",
+      "description": "Trace begins with action, native node name, worker, owner, token, view id and sequence. Defaults supply the local node and empty optional identities. These labels make control and transport stages distinguishable in local stdout receipts.",
+      "ranges": [
+        {
+          "code": "type Trace: record {\naction: string;\nnode: string &default=Cluster::node;\nworker: string &default=\"\";\nowner: string &default=\"\";\ntoken: string &default=\"\";\nview_id: string &default=\"\";\nseq: count &default=0;"
+        }
+      ],
+      "links": [
+        [
+          "trace-output",
+          "Print the structured receipt"
+        ]
+      ]
+    },
+    {
+      "id": "trace-counts",
+      "title": "Represent counts and observed source times",
+      "description": "Trace packets/facts count observed work, complete reports the current outcome, and has_observation distinguishes an empty source. observed and source_query carry source event and original query times; uid retains observed connection identity.",
+      "ranges": [
+        {
+          "code": "packets: count &default=0;\nfacts: count &default=0;\ncomplete: bool &default=F;\nhas_observation: bool &default=F;\nobserved: time &default=double_to_time(0);\nsource_query: time &default=double_to_time(0);\nuid: string &default=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "eos-send",
+          "Describe the actual source close"
+        ]
+      ]
+    },
+    {
+      "id": "trace-semantics",
+      "title": "Keep diagnostic source time distinct from local time",
+      "description": "The remaining Trace fields describe scope, SID, kind, route, generation and detail. exact_time can retain a full precision source value. local_network defaults to network_time for diagnostics, while lifecycle expiry and ordering use the explicit source clock.",
+      "ranges": [
+        {
+          "code": "scope: string &default=\"\";\nsid: string &default=\"\";\nkind: string &default=\"\";\nframe_kind: count &default=255;\nreply_kind: count &default=255;\nroute: string &default=\"\";\ngeneration: count &default=0;\ndetail: string &default=\"\";\nexact_time: string &default=\"\";\nlocal_network: time &default=network_time();"
+        }
+      ],
+      "links": [
+        [
+          "source-clock",
+          "Choose the actual lifecycle clock"
+        ]
+      ]
+    },
+    {
+      "id": "trace-output",
+      "title": "Print operational receipts as JSON",
+      "description": "trace converts the supplied Trace record to JSON and prints it to standard output. These local operational receipts explain transport and completeness; the shared main module emits security findings through the standard Notice framework.",
+      "ranges": [
+        {
+          "code": "function trace(t: Trace) { print to_json(t); }"
+        }
+      ],
+      "links": [
+        [
+          "shared-pair",
+          "Locate the shared security emission path"
+        ],
+        [
+          "cluster-stats",
+          "Read aggregate cache counts at exit"
+        ]
+      ]
+    },
+    {
+      "id": "view-state",
+      "title": "Latch the finite view and failure publication",
+      "description": "view and installed retain the accepted fixed configuration. bad marks an incomplete window; failure_sent bounds operational failure publication. finished, view_sent, current_nodes and view_ready track the one view setup and finish lifecycle.",
+      "ranges": [
+        {
+          "code": "global view: View;\nglobal installed = F;\nglobal bad = F;\n# Bound operational failure publication too, not only observation buffers.\nglobal failure_sent = F;\nglobal finished = F;\nglobal view_sent = F;\nglobal current_nodes: table[string] of string;\nglobal view_ready: set[string];"
+        }
+      ],
+      "links": [
+        [
+          "mark-bad",
+          "Publish one failure signal"
+        ],
+        [
+          "membership-freeze",
+          "Install the native fixed view"
+        ]
+      ]
+    },
+    {
+      "id": "source-state",
+      "title": "Retain worker packet and closure progress",
+      "description": "packets, source_first and source_last record actual packet callbacks. source_eof and sealed distinguish native close from post EOF handoff. source_dropped counts late or overflowing facts; started and sent gate the one finite publication pass.",
+      "ranges": [
+        {
+          "code": "global packets: count = 0;\nglobal source_first = double_to_time(0);\nglobal source_last = double_to_time(0);\nglobal source_eof = F;\nglobal source_dropped: count = 0;\nglobal worker1_released = F;\nglobal sealed = F;\nglobal started = F;\nglobal sent = F;"
+        }
+      ],
+      "links": [
+        [
+          "packet-times",
+          "Observe native packet bounds"
+        ],
+        [
+          "source-overflow",
+          "Count late or overflowing observations"
+        ]
+      ]
+    },
+    {
+      "id": "transport-state",
+      "title": "Retain bounded source facts and stream receipts",
+      "description": "source_buffer holds selected worker Observations. seq_count indexes per owner outgoing sequences. ack_counts is declared here; active manager ACK bookkeeping uses the separate receipt sets. eos_seen, received and transport_hash retain source closes, unique sequence counts and content digests. facts holds the owner’s finite reduction input.",
+      "ranges": [
+        {
+          "code": "global source_buffer: vector of DNScat2::Observation;\nglobal seq_count: table[string] of count &default=0;\nglobal ack_counts: table[string] of count &default=0;\nglobal eos_seen: table[string] of EOS;\nglobal received: table[string] of count &default=0;\nglobal transport_hash: table[string,count] of string;\nglobal facts: Facts;"
+        }
+      ],
+      "links": [
+        [
+          "fact-store",
+          "Store a unique admitted fact"
+        ],
+        [
+          "contiguous-stream",
+          "Verify complete stream coverage"
+        ]
+      ]
+    },
+    {
+      "id": "reduction-state",
+      "title": "Retain owner token bindings and source clock",
+      "description": "owner_prepared and owner_committed gate reduction. token_bindings maps stable key plus namespaced token to an owner admitted Frame; fact_identity deduplicates query and paired semantics separately. source_clock advances during sorted reduction.",
+      "ranges": [
+        {
+          "code": "global owner_prepared = F;\nglobal owner_committed = F;\nglobal token_bindings: table[Key,string] of DNScat2::Frame;\nglobal fact_identity: table[Key,string,bool] of string;\nglobal source_clock = double_to_time(0);"
+        }
+      ],
+      "links": [
+        [
+          "bind-query",
+          "Save owner assigned generation bindings"
+        ],
+        [
+          "reduction-dedup",
+          "Deduplicate the sorted facts"
+        ]
+      ]
+    },
+    {
+      "id": "manager-state",
+      "title": "Track prepare votes, ACK sets and shutdown",
+      "description": "prepare_votes/counts retain owner readiness. Global fact and EOS ACK sets deduplicate manager receipts, done_owners tracks reduction completion, and decision_sent/shutdown_scheduled gate the finite commit and shutdown paths.",
+      "ranges": [
+        {
+          "code": "global prepare_votes: table[string] of bool;\nglobal prepare_counts: table[string] of count;\nglobal global_fact_acks: set[string,string,count];\nglobal global_eos_acks: set[string,string];\nglobal done_owners: set[string];\nglobal decision_sent = F;\nglobal shutdown_scheduled = F;"
+        }
+      ],
+      "links": [
+        [
+          "manager-gate",
+          "Require the completion inventory"
+        ],
+        [
+          "owners-done",
+          "Finish after all owners report completion"
+        ]
+      ]
+    },
+    {
+      "id": "event-time",
+      "title": "Choose query or actual reply source time",
+      "description": "event_time returns reply_at for a paired observation and at for a query observation. The original query time stays in Observation even when its paired event sorts later.",
+      "ranges": [
+        {
+          "code": "function event_time(o: DNScat2::Observation): time\n{ if ( o?$reply ) return o$reply_at; return o$at; }"
+        }
+      ],
+      "links": [
+        [
+          "source-order",
+          "Order the completed finite input"
+        ],
+        [
+          "source-clock",
+          "Apply this time during reduction"
+        ]
+      ]
+    },
+    {
+      "id": "observation-digest",
+      "title": "Bind semantic content and full precision native times",
+      "description": "observation_digest hashes the JSON metadata together with query/reply seconds formatted at 17 significant digits. This includes native time precision beyond JSON display rounding, so changed fine grained time content can be distinguished from a duplicate.",
+      "ranges": [
+        {
+          "code": "function observation_digest(o: DNScat2::Observation): string\n{\n# to_json renders time with display precision; bind full native time values\n# too, so a conflicting sub-microsecond payload is not a false duplicate.\nreturn sha256_hash(cat(to_json(o),fmt(\"/%.17g/%.17g\",time_to_double(o$at),o?$reply ? time_to_double(o$reply_at) : 0.0)));"
+        }
+      ],
+      "links": [
+        [
+          "semantic-content",
+          "Check token content before commit"
+        ],
+        [
+          "transport-duplicate",
+          "Compare repeated sequence content"
+        ]
+      ]
+    },
+    {
+      "id": "key-builder",
+      "title": "Build a typed owner key from normalized fields",
+      "description": "`key_for` combines scope, client and server addresses, typed server port, wrapper form, suffix and SID. These observed protocol fields define the HRW key. Related traffic keeps one effective owner across UDP source port changes and worker observations, preserving its lifecycle context.",
+      "ranges": [
+        {
+          "code": "function key_for(o: DNScat2::Observation): Key\n{\nreturn [$scope=o$scope,$client=o$peers$orig_h,$server=o$peers$resp_h,$server_port=o$peers$resp_p,\n$wrapper=starts_with(o$request$suffix,\"@tag:\") ? \"tag\" : \"domain\",$suffix=o$request$suffix,$sid=o$request$sid];"
+        }
+      ],
+      "links": [
+        [
+          "owner-key",
+          "Read the key fields"
+        ],
+        [
+          "hrw-route",
+          "Select the stable owner"
+        ]
+      ]
+    },
+    {
+      "id": "worker-dispatch",
+      "title": "Collect only finite worker observations",
+      "description": "remote_dispatch starts with an empty Frame and accepts observations only on a WORKER with finite_mode enabled. The adapter replaces the core dispatch callback with this function, leaving the common lifecycle for later owner reduction.",
+      "ranges": [
+        {
+          "code": "function remote_dispatch(o: DNScat2::Observation): DNScat2::Frame\n{\nlocal empty: DNScat2::Frame;\nif ( Cluster::local_node_type()!=Cluster::WORKER || ! finite_mode ) return empty;"
+        }
+      ],
+      "links": [
+        [
+          "worker-unbound",
+          "Buffer metadata with cleared worker bindings"
+        ]
+      ]
+    },
+    {
+      "id": "source-overflow",
+      "title": "Latch late facts or worker buffer overflow",
+      "description": "A sealed source or full max_worker_facts buffer increments source_dropped and marks bad. The first such failure emits a local SOURCE_INCOMPLETE receipt; failure_sent permits at most one installed view manager failure publication on this path. The observation returns an empty Frame.",
+      "ranges": [
+        {
+          "code": "if ( sealed || |source_buffer|>=max_worker_facts )\n{\n++source_dropped;\nif ( ! bad ) trace([$action=\"SOURCE_INCOMPLETE\",$worker=Cluster::node,$detail=\"late fact or bounded source buffer overflow\"]);\nbad=T;\nif ( installed && ! failure_sent )\n{ failure_sent=T; Cluster::publish(Cluster::manager_topic,failure,Cluster::node,view$id,\"late fact/buffer overflow\"); }\nreturn empty;"
+        }
+      ],
+      "links": [
+        [
+          "mark-bad",
+          "Read the shared operational failure latch"
+        ],
+        [
+          "buffer-limits",
+          "Configure the finite storage bounds"
+        ]
+      ]
+    },
+    {
+      "id": "worker-unbound",
+      "title": "Buffer compact metadata with cleared worker bindings",
+      "description": "The worker clears generation, original key binding, context and progressed priority, then buffers compact Observation metadata. Frame lengths, kinds, SID, suffix and key fingerprints carry the lifecycle inputs. Raw query and answer bytes remain in local carrier normalization. Returning the request Frame preserves native DNS pairing until the owner assigns an epoch.",
+      "ranges": [
+        {
+          "code": "# No local lifecycle and no worker epoch: even a SYN/MSG without local INIT\n# retains native transaction pairing and can reach its stable owner.\no$request$generation=0; o$request$initial_key_hash=\"\"; o$request$context=\"\"; o$request$progressed=F;\nsource_buffer[|source_buffer|]=o;\ntrace([$action=\"SOURCE_FACT\",$worker=Cluster::node,$token=o$token,$observed=event_time(o),$source_query=o$at,$uid=o$uid,$scope=o$scope,$sid=o$request$sid,$kind=o?$reply ? \"PAIR\" : \"QUERY\",$frame_kind=o$request$kind,$reply_kind=o?$reply ? o$reply$kind : 255,$exact_time=fmt(\"%.17g\",time_to_double(event_time(o)))]);\nif ( ! o?$reply ) return o$request;\nreturn empty;"
+        }
+      ],
+      "links": [
+        [
+          "bind-query",
+          "Assign the original query’s owner binding"
+        ],
+        [
+          "outgoing-fact",
+          "Namespace the transport token"
+        ]
+      ]
+    },
+    {
+      "id": "source-clock",
+      "title": "Override the shared lifecycle with sorted source time",
+      "description": "`owner_clock` returns sorted `source_clock` on a PROXY and native `network_time` elsewhere. Separate redefs select observation dispatch and lifecycle time. Each reduced fact advances the source clock before shared expiry and promotion, preserving the source timing of state transitions.",
+      "ranges": [
+        {
+          "code": "function owner_clock(): time\n{ if ( Cluster::local_node_type()==Cluster::PROXY ) return source_clock; return network_time(); }\nredef DNScat2::dispatch_observation = remote_dispatch;\nredef DNScat2::lifecycle_time = owner_clock;"
+        }
+      ],
+      "links": [
+        [
+          "reduce-clock",
+          "Advance the clock before each reduction"
+        ],
+        [
+          "shared-pair",
+          "Use the preserved completing source timestamp"
+        ]
+      ]
+    },
+    {
+      "id": "native-publish",
+      "title": "Use native proxy pool HRW publication",
+      "description": "native_publish sends a Fact through Cluster::publish_hrw using proxy_pool and the typed key. native_order preserves the outgoing vector. The redefs install these defaults behind the explicit publication hooks.",
+      "ranges": [
+        {
+          "code": "function native_publish(f: Fact): bool\n{ return Cluster::publish_hrw(Cluster::proxy_pool,f$key,fact,f); }\nfunction native_order(f: Facts): Facts { return f; }\nredef publish_fact = native_publish;\nredef publication_order = native_order;"
+        }
+      ],
+      "links": [
+        [
+          "hrw-route",
+          "Resolve the selected destination topic"
+        ],
+        [
+          "send-facts",
+          "Separate publish acceptance from ACKs"
+        ]
+      ]
+    },
+    {
+      "id": "mark-bad",
+      "title": "Mark incompleteness and bound failure publication",
+      "description": "mark_bad sets bad and prints INCOMPLETE with its reason. An installed nonmanager node sends one manager failure event, guarded by failure_sent. Repeated failures keep the incomplete state while the operational publication latch bounds control traffic.",
+      "ranges": [
+        {
+          "code": "function mark_bad(reason: string)\n{\nbad=T;\ntrace([$action=\"INCOMPLETE\",$detail=reason]);\nif ( installed && ! failure_sent && Cluster::local_node_type()!=Cluster::MANAGER )\n{ failure_sent=T; Cluster::publish(Cluster::manager_topic,failure,Cluster::node,view$id,reason); }"
+        }
+      ],
+      "links": [
+        [
+          "window-failure",
+          "Drain and stop the finite window"
+        ]
+      ]
+    },
+    {
+      "id": "worker-send-gate",
+      "title": "Require a sealed source and unchanged owner view",
+      "description": "worker_maybe_send requires finite WORKER role, installed view, source release, sealed EOF and an unsent source. It checks the live proxy count and each configured owner incarnation against the frozen view before setting sent and constructing outgoing facts.",
+      "ranges": [
+        {
+          "code": "function worker_maybe_send()\n{\nif ( ! finite_mode || Cluster::local_node_type()!=Cluster::WORKER || ! installed || ! started || ! sealed || sent ) return;\nif ( Cluster::proxy_pool$alive_count!=|expected_owners| ) { mark_bad(\"routing view unavailable\"); return; }\nfor ( owner in expected_owners )\nif ( owner !in current_nodes || current_nodes[owner]!=view$nodes[owner] ) { mark_bad(\"routing incarnation changed\"); return; }\nsent=T;\nlocal outgoing: Facts = vector();"
+        }
+      ],
+      "links": [
+        [
+          "after-eof",
+          "Seal the post EOF source"
+        ],
+        [
+          "source-release",
+          "Authorize publication after readiness"
+        ]
+      ]
+    },
+    {
+      "id": "hrw-route",
+      "title": "Route each typed key to one configured owner",
+      "description": "Each buffered Observation supplies a typed key to `Cluster::hrw_topic`. The selected topic must name a configured owner. Related keys select one effective owner, preserving session context across workers and UDP source ports. Each owner stream increments its own contiguous sequence count.",
+      "ranges": [
+        {
+          "code": "for ( i in source_buffer )\n{\nlocal o=source_buffer[i];\nlocal k=key_for(o);\nlocal topic=Cluster::hrw_topic(Cluster::proxy_pool,k);\nlocal owner_name=\"\";\nfor ( own in expected_owners ) if ( topic==Cluster::node_topic(own) ) owner_name=own;\nif ( owner_name==\"\" ) { mark_bad(\"unknown HRW owner\"); return; }\n++seq_count[owner_name];"
+        }
+      ],
+      "links": [
+        [
+          "outgoing-fact",
+          "Bind source and destination incarnations"
+        ],
+        [
+          "contiguous-stream",
+          "Require every per owner sequence"
+        ]
+      ]
+    },
+    {
+      "id": "outgoing-fact",
+      "title": "Construct the namespaced transaction envelope",
+      "description": "The Fact binds worker incarnation, view id, selected owner incarnation and sequence. It retains native query/event seconds and formats token as worker/incarnation/UID/DNS ID/serial. A reused UID or DNS ID remains distinct across workers, incarnations and fresh transaction serials.",
+      "ranges": [
+        {
+          "code": "local f: Fact=[$key=k,$worker=Cluster::node,$incarnation=Cluster::node_id(),$view_id=view$id,\n$owner_topic=topic,$owner_incarnation=view$nodes[owner_name],$seq=seq_count[owner_name],\n$query_seconds=time_to_double(o$at),$event_seconds=time_to_double(event_time(o)),\n$token=fmt(\"%s/%s/%s/%d/%d\",Cluster::node,Cluster::node_id(),o$uid,o$dns_id,o$serial),$o=o];\noutgoing[|outgoing|]=f;"
+        }
+      ],
+      "links": [
+        [
+          "canonical-token",
+          "Validate the exact token construction"
+        ],
+        [
+          "fact-times",
+          "Preserve the source seconds"
+        ]
+      ]
+    },
+    {
+      "id": "send-facts",
+      "title": "Publish the ordered outgoing vector",
+      "description": "publication_order supplies the outgoing vector. Each Fact then passes to publish_fact. FACT_SEND records publication acceptance; a false return marks bad. Actual owner receipt and worker ACKs are tracked separately before manager commit.",
+      "ranges": [
+        {
+          "code": "outgoing=publication_order(outgoing);\nfor ( j in outgoing )\n{\nlocal send=outgoing[j];\nlocal ok=publish_fact(send);\ntrace([$action=\"FACT_SEND\",$worker=Cluster::node,$owner=send$owner_topic,$seq=send$seq,$token=send$token,$observed=event_time(send$o),$source_query=send$o$at,$uid=send$o$uid,$scope=send$o$scope,$sid=send$key$sid,$kind=send$o?$reply ? \"PAIR\" : \"QUERY\",$complete=ok]);\nif ( ! ok ) bad=T;"
+        }
+      ],
+      "links": [
+        [
+          "fact-ack",
+          "Observe the owner acknowledgement"
+        ],
+        [
+          "manager-gate",
+          "Require actual ACK inventory"
+        ]
+      ]
+    },
+    {
+      "id": "eos-send",
+      "title": "Send EOS to every configured owner",
+      "description": "Each worker sends an EOS for every owner, including a zero fact stream. last_seq uses that owner’s count, while native packet inventory and first/last times describe the entire assigned worker input. complete requires native EOF, an unmarked source and the expected packet count.",
+      "ranges": [
+        {
+          "code": "for ( owner2 in expected_owners )\n{\nlocal e: EOS=[$worker=Cluster::node,$incarnation=Cluster::node_id(),$view_id=view$id,$owner=owner2,$last_seq=seq_count[owner2],\n$packets=packets,$hash=input_hash,$has_observation=packets>0,$first=source_first,$last=source_last,$complete=source_eof && ! bad && packets==expected_packets];\nlocal ok2=Cluster::publish(Cluster::node_topic(owner2),eos,e);\ntrace([$action=\"EOS_SEND\",$worker=Cluster::node,$owner=owner2,$seq=e$last_seq,$packets=packets,$observed=source_last,$has_observation=packets>0,$complete=e$complete && ok2]);"
+        }
+      ],
+      "links": [
+        [
+          "eos-input",
+          "Compare EOS with the fixed source assignment"
+        ],
+        [
+          "empty-source",
+          "Represent an empty source through actual packet bounds"
+        ]
+      ]
+    },
+    {
+      "id": "manager-gate",
+      "title": "Wait for owner votes and measured receipt inventory",
+      "description": "The manager requires its role, an unsent decision, one prepare vote per owner and an EOS ACK for every worker owner combination. It totals owner fact counts, combines their complete flags with bad, and waits until the global fact ACK set covers that total.",
+      "ranges": [
+        {
+          "code": "function manager_maybe_decide()\n{\nif ( Cluster::local_node_type()!=Cluster::MANAGER || decision_sent || |prepare_votes|!=|expected_owners| || |global_eos_acks|!=|expected_workers|*|expected_owners| ) return;\nlocal expected: count=0;\nlocal complete=!bad;\nfor ( owner in prepare_votes ) { expected+=prepare_counts[owner]; if ( ! prepare_votes[owner] ) complete=F; }\nif ( |global_fact_acks|<expected ) return;"
+        }
+      ],
+      "links": [
+        [
+          "prepared-vote",
+          "Receive the owner’s precommit result"
+        ],
+        [
+          "ack-inventory",
+          "Collect deduplicated worker ACK receipts"
+        ]
+      ]
+    },
+    {
+      "id": "manager-decision",
+      "title": "Commit only the complete closed window",
+      "description": "`decision_sent` latches one decision. An incomplete window traces `WINDOW_INCOMPLETE` and schedules shutdown. A complete window traces `WINDOW_COMMIT` and sends `commit_window` to proxies. Both assigned inputs have closed and passed EOS, stream, semantic and ACK checks before reduction emits findings; their timestamps retain source evidence time.",
+      "ranges": [
+        {
+          "code": "decision_sent=T;\nif ( ! complete )\n{\ntrace([$action=\"WINDOW_INCOMPLETE\",$complete=F,$facts=expected]);\nshutdown_scheduled=T; schedule 1sec { finish() }; return;\n}\ntrace([$action=\"WINDOW_COMMIT\",$complete=T,$facts=expected]);\nCluster::publish(Cluster::proxy_topic,commit_window,view$id);"
+        }
+      ],
+      "links": [
+        [
+          "commit-guard",
+          "Enter reduction only after authorization"
+        ],
+        [
+          "shared-pair",
+          "Preserve evidence time at the actual emitter"
+        ]
+      ]
+    },
+    {
+      "id": "source-order",
+      "title": "Sort finite facts by actual source event time",
+      "description": "`compare_facts` orders the complete finite set by actual source event time: query `at` or paired `reply_at`. Sorting follows the complete window decision. The shared lifecycle therefore sees the source sequence after all assigned input and receipt checks finish.",
+      "ranges": [
+        {
+          "code": "function compare_facts(a: Fact,b: Fact): int\n{\nlocal ta=event_time(a$o); local tb=event_time(b$o);\nif ( ta<tb ) return -1;\nif ( ta>tb ) return 1;"
+        }
+      ],
+      "links": [
+        [
+          "event-time",
+          "Select the relevant source time"
+        ],
+        [
+          "commit-guard",
+          "Sort after closed window authorization"
+        ]
+      ]
+    },
+    {
+      "id": "source-ties",
+      "title": "Order tied queries before pairs and INIT before other queries",
+      "description": "At equal event time, query facts precede paired facts and INIT queries precede other queries. strcmp on the namespaced token breaks remaining ties. Different INIT keys at the same stable key/time are rejected during preparation before this ordering can choose a winner.",
+      "ranges": [
+        {
+          "code": "# Query facts precede paired facts; INIT queries precede other queries at a\n# tied source time. Conflicting INIT ties are rejected before any reduction.\nif ( ! a$o?$reply && b$o?$reply ) return -1;\nif ( a$o?$reply && ! b$o?$reply ) return 1;\nif ( ! a$o?$reply && a$o$request$kind==3 && b$o$request$kind!=3 ) return -1;\nif ( ! b$o?$reply && b$o$request$kind==3 && a$o$request$kind!=3 ) return 1;\nreturn strcmp(a$token,b$token);"
+        }
+      ],
+      "links": [
+        [
+          "init-conflict",
+          "Prevalidate ambiguous equal time key changes"
+        ]
+      ]
+    },
+    {
+      "id": "contiguous-stream",
+      "title": "Require every sequence declared by both EOS sources",
+      "description": "Preparation begins once per owner after EOS arrives from all expected workers. Each EOS must be complete and its final sequence count must equal unique received facts. The loop also checks every transport_hash entry from 1 through last_seq within the fact bound, exposing gaps even when EOS itself arrived.",
+      "ranges": [
+        {
+          "code": "function owner_maybe_prepare()\n{\nif ( owner_prepared || |eos_seen|!=|expected_workers| ) return;\nowner_prepared=T;\nfor ( worker in expected_workers )\n{\nlocal e=eos_seen[worker];\nif ( ! e$complete || e$last_seq!=received[worker] ) bad=T;\nlocal seq: count=1;\nwhile ( seq<=e$last_seq && seq<=max_owner_facts )\n{ if ( [worker,seq] !in transport_hash ) bad=T; ++seq; }"
+        }
+      ],
+      "links": [
+        [
+          "eos-identity-check",
+          "Accept the matching source close identity"
+        ],
+        [
+          "manager-decision",
+          "Withhold reduction for an incomplete window"
+        ]
+      ]
+    },
+    {
+      "id": "init-conflict",
+      "title": "Reject conflicting equal time INIT barriers before reduction",
+      "description": "The barriers table indexes stable key and query source time. Two request only kind 3 observations at that index must carry the same client key fingerprint. A difference marks bad before any owner prepare vote can authorize shared state reduction.",
+      "ranges": [
+        {
+          "code": "local barriers: table[Key,time] of string;\nfor ( i in facts )\n{\nlocal f=facts[i];\nif ( ! f$o?$reply && f$o$request$kind==3 )\n{\nif ( [f$key,f$o$at] in barriers && barriers[f$key,f$o$at]!=f$o$request$key_hash ) bad=T;\nelse barriers[f$key,f$o$at]=f$o$request$key_hash;"
+        }
+      ],
+      "links": [
+        [
+          "source-ties",
+          "Apply deterministic ordering to the remaining valid ties"
+        ]
+      ]
+    },
+    {
+      "id": "semantic-content",
+      "title": "Prevalidate repeated token content",
+      "description": "semantics indexes stable key, namespaced token and query versus pair role. Repeated entries must share observation_digest. Query observations are also retained by key/token for pair consistency checks. These checks scan the whole closed fact set before commit.",
+      "ranges": [
+        {
+          "code": "local semantics: table[Key,string,bool] of string;\nlocal queries: table[Key,string] of DNScat2::Observation;\nfor ( si in facts )\n{\nlocal sf=facts[si];\nlocal paired=sf$o?$reply;\nlocal hash=observation_digest(sf$o);\nif ( [sf$key,sf$token,paired] in semantics && semantics[sf$key,sf$token,paired]!=hash ) bad=T;\nelse semantics[sf$key,sf$token,paired]=hash;\nif ( ! paired ) queries[sf$key,sf$token]=sf$o;"
+        }
+      ],
+      "links": [
+        [
+          "observation-digest",
+          "Include full precision times in the content identity"
+        ],
+        [
+          "pair-consistency",
+          "Require the pair’s original query metadata"
+        ]
+      ]
+    },
+    {
+      "id": "semantic-cap",
+      "title": "Check token and semantic budgets before commit",
+      "description": "The complete set may contain at most max_tokens distinct key/token queries and max_owner_facts semantic entries. Exceeding either sets bad before the prepare vote, keeping capacity rejection ahead of Notice producing reduction.",
+      "ranges": [
+        {
+          "code": "if ( |queries|>max_tokens || |semantics|>max_owner_facts ) bad=T;"
+        }
+      ],
+      "links": [
+        [
+          "buffer-limits",
+          "Configure the finite budgets"
+        ],
+        [
+          "prepared-vote-send",
+          "Report the precommit outcome"
+        ]
+      ]
+    },
+    {
+      "id": "pair-consistency",
+      "title": "Require an original query with identical transaction metadata",
+      "description": "Each paired fact must have a query at the same stable key and namespaced token. Its request Frame, native query time, UID, DNS ID, serial, query type/hash and typed peers must match that query. A missing query or changed metadata marks the window incomplete before reduction.",
+      "ranges": [
+        {
+          "code": "for ( pi in facts )\n{\nlocal pf=facts[pi];\nif ( ! pf$o?$reply ) next;\nif ( [pf$key,pf$token] !in queries ) { bad=T; next; }\nlocal qo=queries[pf$key,pf$token];\nif ( to_json(qo$request)!=to_json(pf$o$request) || qo$at!=pf$o$at || qo$uid!=pf$o$uid || qo$dns_id!=pf$o$dns_id || qo$serial!=pf$o$serial || qo$qtype!=pf$o$qtype || qo$question_hash!=pf$o$question_hash || to_json(qo$peers)!=to_json(pf$o$peers) ) bad=T;"
+        }
+      ],
+      "links": [
+        [
+          "bind-query",
+          "Retain the original query’s admitted owner Frame"
+        ]
+      ]
+    },
+    {
+      "id": "prepared-vote-send",
+      "title": "Send the owner’s complete window preparation result",
+      "description": "PREPARED reports the current complete flag and retained fact count. The owner publishes that same flag/count with its native incarnation and fixed view id to the manager. This is a readiness vote; the manager sends the separate commit authorization.",
+      "ranges": [
+        {
+          "code": "trace([$action=\"PREPARED\",$owner=Cluster::node,$complete=!bad,$facts=|facts|]);\nCluster::publish(Cluster::manager_topic,prepared,Cluster::node,Cluster::node_id(),view$id,!bad,|facts|);"
+        }
+      ],
+      "links": [
+        [
+          "manager-gate",
+          "Combine both owner votes and ACKs"
+        ]
+      ]
+    },
+    {
+      "id": "fact-view",
+      "title": "Validate the fixed source and destination identities",
+      "description": "validate_fact requires an installed view, matching view id, configured worker incarnation, this owner’s node topic and current owner incarnation. The following checks then examine the compact Observation and request Frame.",
+      "ranges": [
+        {
+          "code": "function validate_fact(f: Fact): bool\n{\nif ( ! installed || f$view_id!=view$id || f$worker !in expected_workers || f$incarnation!=view$nodes[f$worker] || f$owner_topic!=Cluster::node_topic(Cluster::node) || f$owner_incarnation!=Cluster::node_id() ) return F;\nlocal o=f$o; local q=o$request;"
+        }
+      ],
+      "links": [
+        [
+          "fact-envelope",
+          "Read the envelope’s identity fields"
+        ],
+        [
+          "fact-metadata-bounds",
+          "Apply metadata bounds"
+        ]
+      ]
+    },
+    {
+      "id": "fact-metadata-bounds",
+      "title": "Bound scope and compact request metadata",
+      "description": "Scope must belong to allowed_scopes and fit 128 bytes. UID, local token, envelope token, suffix and key fingerprint have explicit bounds. The request must arrive with empty context/original key binding and generation zero, leaving owner lifecycle admission responsible for those fields.",
+      "ranges": [
+        {
+          "code": "if ( o$scope !in allowed_scopes || |o$scope|>128 || |o$uid|>128 || |o$token|>256 || |f$token|>512 || |q$suffix|==0 || |q$suffix|>253 || |q$key_hash|>64 || |q$context|>0 || q$generation!=0 || |q$initial_key_hash|>0 ) return F;"
+        }
+      ],
+      "links": [
+        [
+          "worker-unbound",
+          "Clear worker lifecycle bindings before buffering"
+        ],
+        [
+          "allowed-scopes",
+          "Configure observation namespaces"
+        ]
+      ]
+    },
+    {
+      "id": "canonical-token",
+      "title": "Validate frame shape, canonical token and typed key",
+      "description": "The request must be valid, with a four lowercase hex SID, supported kind, bounded length, DNS ID at most 65535, positive serial and bounded positive sequence. The token must exactly reproduce worker/incarnation/UID/DNS ID/serial; question_hash must be 64 lowercase hex characters, and the supplied key must equal key_for(o).",
+      "ranges": [
+        {
+          "code": "if ( ! q$valid || ! (/^[0-9a-f]{4}$/ in q$sid) || q$kind>3 || q$length<5 || q$length>DNScat2::max_frame_bytes || o$dns_id>65535 || o$serial==0 || f$seq==0 || f$seq>max_owner_facts ) return F;\nif ( f$token!=fmt(\"%s/%s/%s/%d/%d\",f$worker,f$incarnation,o$uid,o$dns_id,o$serial) ) return F;\nif ( ! (/^[0-9a-f]{64}$/ in o$question_hash) ) return F;\nif ( to_json(f$key)!=to_json(key_for(o)) ) return F;"
+        }
+      ],
+      "links": [
+        [
+          "outgoing-fact",
+          "Construct the canonical envelope"
+        ],
+        [
+          "key-builder",
+          "Recompute the typed metadata key"
+        ]
+      ]
+    },
+    {
+      "id": "fact-time-bounds",
+      "title": "Constrain native times to assigned PCAP bounds",
+      "description": "The worker input must contain data. Query seconds must lie within its first/last interval expanded by one microsecond for classic PCAP representation, and event seconds must be at or after query seconds and within the upper bound. A query only event requires equal query/event seconds. This tolerance bounds numeric representation; EOS and sequence coverage establish completeness.",
+      "ranges": [
+        {
+          "code": "local input=view$inputs[f$worker];\n# This one-microsecond check is only the classic PCAP representation bound,\n# never a lateness/watermark lag. EOS/contiguous streams prove completeness.\nlocal lo=time_to_double(input$first)-0.000001;\nlocal hi=time_to_double(input$last)+0.000001;\nif ( ! input$has_data || ! (f$query_seconds>=lo && f$query_seconds<=hi && f$event_seconds>=f$query_seconds && f$event_seconds<=hi) ) return F;\nif ( ! o?$reply && f$query_seconds!=f$event_seconds ) return F;"
+        }
+      ],
+      "links": [
+        [
+          "contiguous-stream",
+          "Require complete EOS and sequence coverage"
+        ],
+        [
+          "restore-times",
+          "Restore exact callback seconds"
+        ]
+      ]
+    },
+    {
+      "id": "reply-metadata",
+      "title": "Check the compact paired reply fields",
+      "description": "A paired observation requires reply_at and a valid reply Frame, with bounded key fingerprint, supported kind and bounded length. Passing these final metadata checks returns T to the owner receipt handler.",
+      "ranges": [
+        {
+          "code": "if ( o?$reply && (! o?$reply_at || ! o$reply$valid || |o$reply$key_hash|>64 || o$reply$kind>3 || o$reply$length>DNScat2::max_frame_bytes) ) return F;\nreturn T;"
+        }
+      ],
+      "links": [
+        [
+          "pair-consistency",
+          "Match the pair to its original query"
+        ]
+      ]
+    },
+    {
+      "id": "packet-times",
+      "title": "Count actual native packet callbacks",
+      "description": "raw_packet acts only for a finite WORKER. It increments packets, records source_first on the first packet and updates source_last from network_time. These actual observations support the assigned input close check.",
+      "ranges": [
+        {
+          "code": "event raw_packet(h: raw_pkt_hdr)\n{\nif ( ! finite_mode || Cluster::local_node_type()!=Cluster::WORKER ) return;\n++packets;\nif ( packets==1 ) source_first=network_time();\nsource_last=network_time();"
+        }
+      ],
+      "links": [
+        [
+          "native-eof",
+          "Compare the source’s final native inventory"
+        ]
+      ]
+    },
+    {
+      "id": "native-eof",
+      "title": "Accept native EOF for the assigned finite trace",
+      "description": "Pcap::file_done requires finite WORKER role and one source close. It rejects remote events, a different assigned input path, a nontrace source or an already finished process. It records EOF, compares packet count and hash length, traces the native close and queues after_eof for callback drain.",
+      "ranges": [
+        {
+          "code": "event Pcap::file_done(path: string)\n{\nif ( ! finite_mode || Cluster::local_node_type()!=Cluster::WORKER || source_eof ) return;\nif ( is_remote_event() || path!=\"/input/source.pcap\" || ! reading_traces() || finished ) { mark_bad(\"invalid native source close\"); return; }\nsource_eof=T;\nif ( packets!=expected_packets || |input_hash|!=64 ) bad=T;\ntrace([$action=\"NATIVE_EOF\",$worker=Cluster::node,$packets=packets,$facts=|source_buffer|,$observed=source_last,$has_observation=packets>0,$complete=!bad]);\nevent after_eof();"
+        }
+      ],
+      "links": [
+        [
+          "after-eof",
+          "Seal during the queued post EOF handoff"
+        ],
+        [
+          "input-record",
+          "Bind the declared source inventory"
+        ]
+      ]
+    },
+    {
+      "id": "after-eof",
+      "title": "Seal the buffered source after the native close callback",
+      "description": "The queued after_eof event sets sealed=T and tries worker_maybe_send. Publication additionally requires readiness and release, so native EOF and the transport handshake can complete in either operational order.",
+      "ranges": [
+        {
+          "code": "event after_eof() { sealed=T; worker_maybe_send(); }"
+        }
+      ],
+      "links": [
+        [
+          "worker-send-gate",
+          "Require the full publication gate"
+        ]
+      ]
+    },
+    {
+      "id": "membership-gate",
+      "title": "Reject changed or unconfigured membership",
+      "description": "`node_up` requires finite mode and configured worker, owner or manager membership. It rejects a changed incarnation from the installed view. On the manager, the active worker and proxy counts and complete input assignment table gate construction of the initial fixed view.",
+      "ranges": [
+        {
+          "code": "event Cluster::node_up(name: string,id: string)\n{\nif ( ! finite_mode ) return;\nif ( installed && name in view$nodes && view$nodes[name]!=id ) { mark_bad(\"membership incarnation changed\"); return; }\nif ( name !in expected_workers && name !in expected_owners && name!=\"manager\" ) { mark_bad(\"unconfigured member\"); return; }\ncurrent_nodes[name]=id;\nif ( Cluster::local_node_type()==Cluster::MANAGER && ! view_sent && Cluster::get_active_node_count(Cluster::WORKER)==|expected_workers| && Cluster::get_active_node_count(Cluster::PROXY)==|expected_owners| )\n{\nif ( |assigned_inputs|!=|expected_workers| ) { mark_bad(\"missing fixed input assignments\"); return; }"
+        }
+      ],
+      "links": [
+        [
+          "membership-freeze",
+          "Capture the ready node incarnations"
+        ],
+        [
+          "member-down",
+          "Invalidate a fixed view disconnect"
+        ]
+      ]
+    },
+    {
+      "id": "membership-freeze",
+      "title": "Freeze node incarnations and assigned inputs",
+      "description": "The manager marks view_sent, copies each expected worker and owner incarnation, and creates a finite view id from its native node_id. assigned_inputs accompanies the same view. This freezes one membership/input assignment for the window.",
+      "ranges": [
+        {
+          "code": "view_sent=T;\nlocal ids: table[string] of string;\nfor ( w in expected_workers ) { if ( w !in current_nodes ) return; ids[w]=current_nodes[w]; }\nfor ( p in expected_owners ) { if ( p !in current_nodes ) return; ids[p]=current_nodes[p]; }\nview=[$id=fmt(\"finite/%s\",Cluster::node_id()),$nodes=ids,$inputs=assigned_inputs];\ninstalled=T;"
+        }
+      ],
+      "links": [
+        [
+          "install-view",
+          "Verify the received view identity"
+        ]
+      ]
+    },
+    {
+      "id": "view-publication",
+      "title": "Publish the frozen view to workers and proxies",
+      "description": "The manager sends install_view to worker_topic and proxy_topic, then traces VIEW_SENT. Readiness ACKs from these recipients gate source release.",
+      "ranges": [
+        {
+          "code": "Cluster::publish(Cluster::worker_topic,install_view,view);\nCluster::publish(Cluster::proxy_topic,install_view,view);\ntrace([$action=\"VIEW_SENT\",$view_id=view$id]);"
+        }
+      ],
+      "links": [
+        [
+          "ready-view",
+          "Collect fixed view readiness"
+        ]
+      ]
+    },
+    {
+      "id": "member-down",
+      "title": "Invalidate a fixed view node disconnect",
+      "description": "During an installed unfinished finite window, node_down marks bad when the departed node belongs to the frozen view. The failure path drains and stops the job; state ownership remains bound to that one view.",
+      "ranges": [
+        {
+          "code": "event Cluster::node_down(name: string,id: string)\n{\nif ( finite_mode && installed && ! finished && name in view$nodes ) mark_bad(\"fixed membership went down\");"
+        }
+      ],
+      "links": [
+        [
+          "window-failure",
+          "Stop the incomplete finite window"
+        ]
+      ]
+    },
+    {
+      "id": "install-view",
+      "title": "Validate fixed view cardinality and source bindings",
+      "description": "A recipient installs one finite view. Node/input counts must match configuration, its own native incarnation must match the view, and each expected worker needs a node identity and an input with a 64 character hash. It then copies the View and marks installed.",
+      "ranges": [
+        {
+          "code": "event install_view(v: View)\n{\nif ( ! finite_mode || installed ) return;\nif ( |v$nodes|!=|expected_workers|+|expected_owners| || |v$inputs|!=|expected_workers| || Cluster::node !in v$nodes || v$nodes[Cluster::node]!=Cluster::node_id() ) { mark_bad(\"invalid fixed view\"); return; }\nfor ( w in expected_workers ) if ( w !in v$nodes || w !in v$inputs || |v$inputs[w]$hash|!=64 ) { mark_bad(\"invalid source binding\"); return; }\nview=v; installed=T;"
+        }
+      ],
+      "links": [
+        [
+          "view-ready-ack",
+          "Acknowledge the installed view"
+        ]
+      ]
+    },
+    {
+      "id": "view-ready-ack",
+      "title": "Acknowledge the accepted view with native identity",
+      "description": "VIEW_INSTALLED records the view id, then ready_ack sends this node’s name, native incarnation and accepted view id to the manager. The manager validates those identities before counting readiness.",
+      "ranges": [
+        {
+          "code": "trace([$action=\"VIEW_INSTALLED\",$view_id=view$id]);\nCluster::publish(Cluster::manager_topic,ready_ack,Cluster::node,Cluster::node_id(),view$id);"
+        }
+      ],
+      "links": [
+        [
+          "ready-view",
+          "Require the configured complete readiness set"
+        ]
+      ]
+    },
+    {
+      "id": "ready-view",
+      "title": "Require every fixed view node’s readiness",
+      "description": "The manager accepts ready_ack only for the installed view and matching configured incarnation. view_ready is a set, so repeated ACKs retain one readiness entry. The full worker plus owner cardinality opens the source release branch.",
+      "ranges": [
+        {
+          "code": "event ready_ack(node: string,incarnation: string,view_id: string)\n{\nif ( Cluster::local_node_type()!=Cluster::MANAGER || ! installed || view_id!=view$id || node !in view$nodes || incarnation!=view$nodes[node] ) return;\nadd view_ready[node];\nif ( |view_ready|==|expected_workers|+|expected_owners| )\n{\ntrace([$action=\"FIXED_VIEW_READY\",$complete=T]);"
+        }
+      ],
+      "links": [
+        [
+          "source-release-order",
+          "Choose concurrent or sequential publication release"
+        ]
+      ]
+    },
+    {
+      "id": "source-release-order",
+      "title": "Choose operational source release order",
+      "description": "With sequential_sources, the manager initially releases `worker-0`. Otherwise it sends start_source to every expected worker. This schedules transport publication of already bounded sources; native source timestamps determine later reduction order.",
+      "ranges": [
+        {
+          "code": "if ( sequential_sources ) Cluster::publish(Cluster::node_topic(\"worker-0\"),start_source,\"worker-0\",view$id);\nelse for ( w in expected_workers ) Cluster::publish(Cluster::node_topic(w),start_source,w,view$id);"
+        }
+      ],
+      "links": [
+        [
+          "sequential-release",
+          "Release `worker-1` after `worker-0` EOS ACKs"
+        ]
+      ]
+    },
+    {
+      "id": "source-release",
+      "title": "Accept release only for this installed worker/view",
+      "description": "start_source requires WORKER role, this worker name, an installed view and matching view id. It sets started and tries publication. A source already sealed at EOF can now send; an open source still waits for its native close.",
+      "ranges": [
+        {
+          "code": "event start_source(worker: string,view_id: string)\n{\nif ( Cluster::local_node_type()!=Cluster::WORKER || worker!=Cluster::node || ! installed || view_id!=view$id ) return;\nstarted=T; worker_maybe_send();"
+        }
+      ],
+      "links": [
+        [
+          "worker-send-gate",
+          "Require both sealed input and release"
+        ]
+      ]
+    },
+    {
+      "id": "fact-receipt-gate",
+      "title": "Reject invalid or post preparation facts",
+      "description": "Only PROXY handles Fact. An owner already prepared or a failed validate_fact marks the window incomplete and returns. This prevents a prepared closed set from absorbing later data.",
+      "ranges": [
+        {
+          "code": "event fact(f: Fact)\n{\nif ( Cluster::local_node_type()!=Cluster::PROXY ) return;\nif ( owner_prepared || ! validate_fact(f) ) { mark_bad(\"invalid/late fact\"); return; }"
+        }
+      ],
+      "links": [
+        [
+          "fact-view",
+          "Validate the envelope before storage"
+        ],
+        [
+          "mark-bad",
+          "Latch incomplete status"
+        ]
+      ]
+    },
+    {
+      "id": "restore-times",
+      "title": "Restore exact source callback times before content hashing",
+      "description": "The owner reconstructs o.at from query_seconds and a paired reply_at from event_seconds. The transport digest combines the full Fact JSON with observation_digest, retaining exact native time content in duplicate checks.",
+      "ranges": [
+        {
+          "code": "# Reconstitute the unchanged native source callback time, not the rounded\n# Broker timestamp representation and never owner wall/network time.\nf$o$at=double_to_time(f$query_seconds);\nif ( f$o?$reply ) f$o$reply_at=double_to_time(f$event_seconds);\nlocal digest=sha256_hash(cat(to_json(f),observation_digest(f$o)));"
+        }
+      ],
+      "links": [
+        [
+          "observation-digest",
+          "Preserve precision in semantic identity"
+        ],
+        [
+          "source-order",
+          "Order by the reconstructed source event time"
+        ]
+      ]
+    },
+    {
+      "id": "transport-duplicate",
+      "title": "Recognize identical sequence delivery and reject conflicts",
+      "description": "A repeated worker/sequence must carry the same transport digest. Changed content calls mark_bad. The owner traces FACT_DUPLICATE and ACKs the sequence with the current accepted flag, then returns before adding another fact.",
+      "ranges": [
+        {
+          "code": "if ( [f$worker,f$seq] in transport_hash )\n{\nif ( transport_hash[f$worker,f$seq]!=digest ) mark_bad(\"conflicting transport duplicate\");\ntrace([$action=\"FACT_DUPLICATE\",$worker=f$worker,$owner=Cluster::node,$seq=f$seq,$token=f$token]);\nCluster::publish(Cluster::node_topic(f$worker),fact_ack,Cluster::node,f$seq,!bad); return;"
+        }
+      ],
+      "links": [
+        [
+          "semantic-content",
+          "Also check key/token content before commit"
+        ]
+      ]
+    },
+    {
+      "id": "fact-store",
+      "title": "Bound unique owner fact retention",
+      "description": "At max_owner_facts the owner marks incomplete and refuses storage. Otherwise it stores the worker/sequence digest, increments that worker’s unique received count and appends the Fact. A duplicate sequence followed the earlier return path.",
+      "ranges": [
+        {
+          "code": "if ( |facts|>=max_owner_facts ) { mark_bad(\"bounded owner fact buffer overflow\"); return; }\ntransport_hash[f$worker,f$seq]=digest; ++received[f$worker]; facts[|facts|]=f;"
+        }
+      ],
+      "links": [
+        [
+          "buffer-limits",
+          "Configure owner capacity"
+        ],
+        [
+          "contiguous-stream",
+          "Compare unique receipt coverage with EOS"
+        ]
+      ]
+    },
+    {
+      "id": "fact-receipt-ack",
+      "title": "Trace the admitted fact and acknowledge receipt",
+      "description": "FACT_RX records source and query times, namespaced token, routing key digest and stage kinds. fact_ack then confirms that stored sequence to its worker. This receipt is later relayed to the manager as observed transport progress.",
+      "ranges": [
+        {
+          "code": "trace([$action=\"FACT_RX\",$worker=f$worker,$owner=Cluster::node,$seq=f$seq,$token=f$token,$observed=event_time(f$o),$source_query=f$o$at,$uid=f$o$uid,$scope=f$o$scope,$sid=f$key$sid,$route=sha256_hash(to_json(f$key)),$kind=f$o?$reply ? \"PAIR\" : \"QUERY\",$frame_kind=f$o$request$kind,$reply_kind=f$o?$reply ? f$o$reply$kind : 255]);\nCluster::publish(Cluster::node_topic(f$worker),fact_ack,Cluster::node,f$seq,T);"
+        }
+      ],
+      "links": [
+        [
+          "fact-ack",
+          "Relay the owner receipt"
+        ]
+      ]
+    },
+    {
+      "id": "eos-identity-check",
+      "title": "Validate EOS identity and repeated close content",
+      "description": "EOS requires installed PROXY role, the configured worker incarnation, accepted view id, this owner name and a bounded last_seq. A repeated worker EOS must be JSON identical; changed close content marks incomplete and returns.",
+      "ranges": [
+        {
+          "code": "event eos(e: EOS)\n{\nif ( Cluster::local_node_type()!=Cluster::PROXY || ! installed ) return;\nif ( e$worker !in expected_workers || e$incarnation!=view$nodes[e$worker] || e$view_id!=view$id || e$owner!=Cluster::node || e$last_seq>max_owner_facts ) { mark_bad(\"invalid EOS identity/bounds\"); return; }\nif ( e$worker in eos_seen ) { if ( to_json(eos_seen[e$worker])!=to_json(e) ) mark_bad(\"conflicting EOS\"); return; }"
+        }
+      ],
+      "links": [
+        [
+          "eos-input",
+          "Validate the assigned source inventory"
+        ]
+      ]
+    },
+    {
+      "id": "eos-input",
+      "title": "Compare native source close with its assigned input",
+      "description": "The EOS complete flag, input hash, packet count, observation flag and first/last source times must match the view’s worker assignment. A difference sets bad. The owner retains the EOS for stream completeness checks even when the window is incomplete.",
+      "ranges": [
+        {
+          "code": "local input=view$inputs[e$worker];\nif ( ! e$complete || e$hash!=input$hash || e$packets!=input$packets || e$has_observation!=input$has_data || e$first!=input$first || e$last!=input$last ) bad=T;\neos_seen[e$worker]=e;"
+        }
+      ],
+      "links": [
+        [
+          "contiguous-stream",
+          "Require complete contiguous streams"
+        ],
+        [
+          "input-record",
+          "Read the trusted assignment metadata"
+        ]
+      ]
+    },
+    {
+      "id": "eos-receipt-ack",
+      "title": "Acknowledge EOS and try owner preparation",
+      "description": "EOS_RX reports the observed close and current completeness. The owner sends eos_ack to the worker, then owner_maybe_prepare checks whether both fixed sources have closed with full sequence coverage and consistent semantics.",
+      "ranges": [
+        {
+          "code": "trace([$action=\"EOS_RX\",$worker=e$worker,$owner=Cluster::node,$seq=e$last_seq,$packets=e$packets,$observed=e$last,$has_observation=e$has_observation,$complete=!bad]);\nCluster::publish(Cluster::node_topic(e$worker),eos_ack,Cluster::node,e$last_seq);\nowner_maybe_prepare();"
+        }
+      ],
+      "links": [
+        [
+          "contiguous-stream",
+          "Inspect the closed stream preparation gate"
+        ]
+      ]
+    },
+    {
+      "id": "fact-ack",
+      "title": "Relay actual fact receipt to the manager",
+      "description": "fact_ack traces owner, sequence and accepted status, then publishes ack_seen with this worker’s native incarnation and is_eos=F. Manager ACK bookkeeping tracks the owner/worker sequence namespace separately from publish acceptance.",
+      "ranges": [
+        {
+          "code": "event fact_ack(owner: string,seq: count,accepted: bool)\n{\ntrace([$action=\"ACK\",$worker=Cluster::node,$owner=owner,$seq=seq,$complete=accepted]);\nCluster::publish(Cluster::manager_topic,ack_seen,Cluster::node,Cluster::node_id(),owner,seq,F);"
+        }
+      ],
+      "links": [
+        [
+          "ack-inventory",
+          "Validate and deduplicate the receipt"
+        ]
+      ]
+    },
+    {
+      "id": "eos-ack",
+      "title": "Relay actual EOS receipt to the manager",
+      "description": "eos_ack records the owner’s last_seq and local source_eof status, then publishes ack_seen with is_eos=T. The manager tracks one close ACK per worker owner pair.",
+      "ranges": [
+        {
+          "code": "event eos_ack(owner: string,last_seq: count)\n{\ntrace([$action=\"EOS_ACK\",$worker=Cluster::node,$owner=owner,$seq=last_seq,$complete=source_eof]);\nCluster::publish(Cluster::manager_topic,ack_seen,Cluster::node,Cluster::node_id(),owner,last_seq,T);"
+        }
+      ],
+      "links": [
+        [
+          "ack-inventory",
+          "Collect the complete EOS ACK matrix"
+        ]
+      ]
+    },
+    {
+      "id": "ack-inventory",
+      "title": "Validate and deduplicate manager ACK inventory",
+      "description": "ack_seen requires MANAGER role, installed view, configured worker incarnation and configured owner. An excessive sequence marks bad. EOS adds a worker/owner set member; a fact ACK adds worker/owner/sequence, so repeats retain one inventory entry.",
+      "ranges": [
+        {
+          "code": "event ack_seen(worker: string,incarnation: string,owner: string,seq: count,is_eos: bool)\n{\nif ( Cluster::local_node_type()!=Cluster::MANAGER || ! installed || worker !in expected_workers || incarnation!=view$nodes[worker] || owner !in expected_owners ) return;\nif ( seq>max_owner_facts ) { bad=T; return; }\nif ( is_eos ) add global_eos_acks[worker,owner];\nelse add global_fact_acks[worker,owner,seq];"
+        }
+      ],
+      "links": [
+        [
+          "manager-gate",
+          "Compare the ACK set with prepared counts"
+        ]
+      ]
+    },
+    {
+      "id": "sequential-release",
+      "title": "Release `worker-1` after both `worker-0` close ACKs",
+      "description": "The optional sequential branch requires `worker-0` and an unreleased second source. It checks every expected owner’s `worker-0` EOS ACK before latching worker1_released and sending `worker-1` its start event. This is transport scheduling, while the whole window commit still waits for all sources.",
+      "ranges": [
+        {
+          "code": "if ( sequential_sources && ! worker1_released && worker==\"worker-0\" && |global_eos_acks|>=2 )\n{\n# All worker-0 per-owner ACKs must precede releasing worker-1.\nlocal ok=T;\nfor ( own in expected_owners ) if ( [worker,own] !in global_eos_acks ) ok=F;\nif ( ok ) { worker1_released=T; Cluster::publish(Cluster::node_topic(\"worker-1\"),start_source,\"worker-1\",view$id); }"
+        }
+      ],
+      "links": [
+        [
+          "source-release-order",
+          "Select this operational scheduling mode"
+        ]
+      ]
+    },
+    {
+      "id": "ack-reconsider",
+      "title": "Reconsider the manager decision after ACK updates",
+      "description": "After ACK bookkeeping and optional source release, manager_maybe_decide reevaluates the complete vote/receipt gate. The same gate is also reconsidered when prepare votes arrive.",
+      "ranges": [
+        {
+          "code": "manager_maybe_decide();"
+        }
+      ],
+      "links": [
+        [
+          "manager-gate",
+          "Require complete votes and ACK coverage"
+        ]
+      ]
+    },
+    {
+      "id": "prepared-vote",
+      "title": "Accept an owner vote for this exact view/incarnation",
+      "description": "prepared requires MANAGER role, installed view, configured owner and matching owner incarnation. It records that owner’s complete flag and fact count, then rechecks the manager decision gate.",
+      "ranges": [
+        {
+          "code": "event prepared(owner: string,incarnation: string,view_id: string,complete: bool,n: count)\n{\nif ( Cluster::local_node_type()!=Cluster::MANAGER || ! installed || view_id!=view$id || owner !in expected_owners || incarnation!=view$nodes[owner] ) return;\nprepare_votes[owner]=complete; prepare_counts[owner]=n; manager_maybe_decide();"
+        }
+      ],
+      "links": [
+        [
+          "manager-gate",
+          "Join the votes with ACK receipts"
+        ]
+      ]
+    },
+    {
+      "id": "commit-guard",
+      "title": "Enter source sorted reduction once after complete commit",
+      "description": "commit_window requires installed PROXY role, matching view, a clean prepared owner and an uncommitted window. It latches owner_committed and sorts facts with compare_facts. Both assigned inputs have finished before this finite batch reduction begins.",
+      "ranges": [
+        {
+          "code": "event commit_window(view_id: string)\n{\nif ( Cluster::local_node_type()!=Cluster::PROXY || ! installed || view_id!=view$id || bad || ! owner_prepared || owner_committed ) return;\nowner_committed=T;\nfacts=sort(facts,compare_facts);"
+        }
+      ],
+      "links": [
+        [
+          "manager-decision",
+          "Authorize the closed finite window"
+        ],
+        [
+          "source-order",
+          "Choose source time order"
+        ]
+      ]
+    },
+    {
+      "id": "reduce-clock",
+      "title": "Advance source time for each sorted fact",
+      "description": "For each sorted Fact, source_clock becomes its actual event_time. is_reply identifies query versus paired metadata, and observation_digest supplies semantic content for reduction deduplication. The shared lifecycle_time override reads this source_clock.",
+      "ranges": [
+        {
+          "code": "for ( i in facts )\n{\nlocal f=facts[i]; local o=f$o;\nsource_clock=event_time(o);\nlocal is_reply=o?$reply;\nlocal semantic=observation_digest(o);"
+        }
+      ],
+      "links": [
+        [
+          "source-clock",
+          "Supply the clock to shared state expiry"
+        ]
+      ]
+    },
+    {
+      "id": "reduction-dedup",
+      "title": "Deduplicate key/token semantics during reduction",
+      "description": "fact_identity indexes stable key, namespaced token and query/pair role. An identical repeated semantic fact advances to the next entry. Conflicting content or a full reduction cache marks incomplete and breaks the loop. The earlier whole window preparation is responsible for rejecting such conflicts and capacity excess before commit.",
+      "ranges": [
+        {
+          "code": "if ( [f$key,f$token,is_reply] in fact_identity )\n{ if ( fact_identity[f$key,f$token,is_reply]!=semantic ) { mark_bad(\"conflicting query token content\"); break; } next; }\nif ( |fact_identity|>=max_owner_facts ) { mark_bad(\"bounded reduction token cache overflow\"); break; }\nfact_identity[f$key,f$token,is_reply]=semantic;"
+        }
+      ],
+      "links": [
+        [
+          "semantic-content",
+          "Prevalidate token content before commit"
+        ],
+        [
+          "semantic-cap",
+          "Prevalidate the complete token inventory"
+        ]
+      ]
+    },
+    {
+      "id": "bind-query",
+      "title": "Save the owner admitted Frame under its original query token",
+      "description": "The owner calls `DNScat2::local_dispatch` for the sorted query and stores its admitted Frame under stable key plus namespaced token. The Frame retains the owner assigned generation and original key binding. A paired fact retrieves this original admission, so stale replies reach the shared generation guard with the correct epoch.",
+      "ranges": [
+        {
+          "code": "if ( ! is_reply )\n{\nlocal bound=DNScat2::local_dispatch(o);\ntoken_bindings[f$key,f$token]=bound;\ntrace([$action=\"QUERY_BOUND\",$worker=f$worker,$owner=Cluster::node,$token=f$token,$observed=source_clock,$source_query=o$at,$scope=o$scope,$sid=f$key$sid,$generation=bound$generation,$complete=bound$valid]);"
+        }
+      ],
+      "links": [
+        [
+          "shared-pair",
+          "Reuse that original binding for the paired reply"
+        ]
+      ]
+    },
+    {
+      "id": "shared-pair",
+      "title": "Invoke the shared main emitter with the original query binding",
+      "description": "A pair requires a valid original `token_bindings` entry. The owner restores that Frame and calls `DNScat2::local_dispatch`; missing or refused admission traces `UNKNOWN_QUERY` and skips. The shared main emitter applies generation and stage guards. Finite batch emission follows input closure and commit, with `ts` preserving completing source evidence time.",
+      "ranges": [
+        {
+          "code": "else\n{\nif ( [f$key,f$token] !in token_bindings || ! token_bindings[f$key,f$token]$valid )\n{ trace([$action=\"UNKNOWN_QUERY\",$worker=f$worker,$owner=Cluster::node,$token=f$token,$observed=source_clock]); next; }\no$request=token_bindings[f$key,f$token];\nDNScat2::local_dispatch(o);\ntrace([$action=\"PAIR_REDUCED\",$worker=f$worker,$owner=Cluster::node,$token=f$token,$observed=source_clock,$source_query=o$at,$scope=o$scope,$sid=f$key$sid,$generation=o$request$generation]);"
+        }
+      ],
+      "links": [
+        [
+          "bind-query",
+          "Trace the original owner epoch binding"
+        ],
+        [
+          "source-clock",
+          "Use source time for lifecycle decisions"
+        ],
+        [
+          "notice-filter",
+          "Forward the shared standard Notice output"
+        ]
+      ]
+    },
+    {
+      "id": "owner-done-send",
+      "title": "Report completion of the finite reduction pass",
+      "description": "OWNER_DONE traces the fact count, complete flag and final source clock, with an explicit observation flag. owner_done then reports owner identity/incarnation, view id and fact count to the manager.",
+      "ranges": [
+        {
+          "code": "trace([$action=\"OWNER_DONE\",$owner=Cluster::node,$facts=|facts|,$complete=!bad,$observed=source_clock,$has_observation=|facts|>0]);\nCluster::publish(Cluster::manager_topic,owner_done,Cluster::node,Cluster::node_id(),view$id,|facts|);"
+        }
+      ],
+      "links": [
+        [
+          "owners-done",
+          "Wait for all configured owner completions"
+        ]
+      ]
+    },
+    {
+      "id": "owners-done",
+      "title": "Finish after every owner reports reduction completion",
+      "description": "The manager validates owner/view/incarnation before adding done_owners. Once its cardinality equals expected_owners and shutdown is unscheduled, it schedules finish in one second. That interval is an operational drain delay.",
+      "ranges": [
+        {
+          "code": "event owner_done(owner: string,incarnation: string,view_id: string,n: count)\n{\nif ( Cluster::local_node_type()!=Cluster::MANAGER || ! installed || view_id!=view$id || owner !in expected_owners || incarnation!=view$nodes[owner] ) return;\nadd done_owners[owner];\nif ( |done_owners|==|expected_owners| && ! shutdown_scheduled ) { shutdown_scheduled=T; schedule 1sec { finish() }; }"
+        }
+      ],
+      "links": [
+        [
+          "finish",
+          "Publish shutdown and terminate"
+        ]
+      ]
+    },
+    {
+      "id": "window-failure",
+      "title": "Drain and stop an operationally incomplete window",
+      "description": "For the installed view, the manager sets `bad` and traces `WINDOW_FAILURE`. It schedules shutdown after one second so diagnostics and ACK traffic can drain. The complete source decision gate controls commit authorization.",
+      "ranges": [
+        {
+          "code": "event failure(node: string,view_id: string,reason: string)\n{\nif ( Cluster::local_node_type()!=Cluster::MANAGER || ! installed || view_id!=view$id ) return;\nbad=T; trace([$action=\"WINDOW_FAILURE\",$detail=reason]);\n# Operational failure never authorizes reduction. Give diagnostics/ACKs a\n# bounded drain interval, then shut down this one finite window.\nif ( ! shutdown_scheduled ) { shutdown_scheduled=T; schedule 1sec { finish() }; }"
+        }
+      ],
+      "links": [
+        [
+          "manager-decision",
+          "Separate incomplete shutdown from commit authorization"
+        ]
+      ]
+    },
+    {
+      "id": "notice-filter",
+      "title": "Remotely enable only the standard Notice filter on proxies",
+      "description": "The priority `-10` initialization handler runs this filter change for finite PROXY role. It retrieves Notice::LOG’s default filter, sets log_remote=T and replaces the filter. Default remote DNS/connection log forwarding stays disabled by the global policy; the shared main Notice is the security output forwarded here.",
+      "ranges": [
+        {
+          "code": "event zeek_init() &priority=-10\n{\n# Only the one approved security output is forwarded to the manager. No\n# DNS/connection payload log stream is sent from workers or proxies.\nif ( finite_mode && Cluster::local_node_type()==Cluster::PROXY )\n{\nlocal notice_filter=Log::get_filter(Notice::LOG,\"default\");\nnotice_filter$log_remote=T;\nLog::remove_filter(Notice::LOG,\"default\");\nLog::add_filter(Notice::LOG,notice_filter);"
+        }
+      ],
+      "links": [
+        [
+          "remote-log-policy",
+          "Read the default remote forwarding policy"
+        ],
+        [
+          "shared-pair",
+          "Locate the shared emitter call path"
+        ]
+      ]
+    },
+    {
+      "id": "finite-startup",
+      "title": "Require explicit finite trace operation at startup",
+      "description": "At priority `-20`, `finite_mode=F` prints `LIVE_CLUSTER_DISABLED` and terminates the process. A finite WORKER requires `reading_traces()`. Accepted configuration prints INIT with engine version, backend and node role. The job buffers its assigned PCAP window until native EOF, receipt validation and manager commit authorize reduction.",
+      "ranges": [
+        {
+          "code": "event zeek_init() &priority=-20\n{\nif ( ! finite_mode ) { trace([$action=\"LIVE_CLUSTER_DISABLED\",$detail=\"explicit finite input mode required; live idle/watermark qualification open\"]); terminate(); return; }\nif ( Cluster::local_node_type()==Cluster::WORKER && ! reading_traces() ) { trace([$action=\"LIVE_CLUSTER_DISABLED\",$detail=\"finite workers require assigned immutable -r PCAP input\"]); terminate(); return; }\ntrace([$action=\"INIT\",$detail=fmt(\"%s/%s/%s\",zeek_version(),Cluster::backend,Cluster::local_node_type())]);"
+        }
+      ],
+      "links": [
+        [
+          "finite-mode",
+          "Read the disabled by default setting"
+        ],
+        [
+          "native-eof",
+          "Require native assigned source closure"
+        ]
+      ]
+    },
+    {
+      "id": "finish",
+      "title": "Publish finite window shutdown and terminate",
+      "description": "finish sets finished=T. On the manager it publishes finish to worker and proxy topics, then every recipient traces FINISH with its current completeness and calls terminate. exit_only_after_terminate makes this explicit completion path part of the finite job.",
+      "ranges": [
+        {
+          "code": "event finish()\n{\nfinished=T;\nif ( Cluster::local_node_type()==Cluster::MANAGER ) { Cluster::publish(Cluster::worker_topic,finish); Cluster::publish(Cluster::proxy_topic,finish); }\ntrace([$action=\"FINISH\",$complete=!bad]);\nterminate();"
+        }
+      ],
+      "links": [
+        [
+          "job-log-settings",
+          "Retain processes until the explicit finish path"
+        ]
+      ]
+    },
+    {
+      "id": "cluster-stats",
+      "title": "Print aggregate finite buffer and ACK state at exit",
+      "description": "zeek_done prints CLUSTER_STATS with node name, retained source/owner facts, source drops, transport and semantic entries, query bindings, fact ACKs, EOS sources and configured caps. The counts describe one process/view at exit. Shared main health counters separately describe candidate/session outcomes and FIFO invariants.",
+      "ranges": [
+        {
+          "code": "event zeek_done()\n{\nprint fmt(\"{\\\"action\\\":\\\"CLUSTER_STATS\\\",\\\"node\\\":\\\"%s\\\",\\\"source_facts\\\":%d,\\\"source_dropped\\\":%d,\\\"owner_facts\\\":%d,\\\"transport_entries\\\":%d,\\\"token_bindings\\\":%d,\\\"semantic_entries\\\":%d,\\\"fact_acks\\\":%d,\\\"eos_sources\\\":%d,\\\"limit_worker_facts\\\":%d,\\\"limit_owner_facts\\\":%d,\\\"limit_tokens\\\":%d}\",Cluster::node,|source_buffer|,source_dropped,|facts|,|transport_hash|,|token_bindings|,|fact_identity|,|global_fact_acks|,|eos_seen|,max_worker_facts,max_owner_facts,max_tokens);"
+        }
+      ],
+      "links": [
+        [
+          "buffer-limits",
+          "Interpret each configured cache budget"
+        ],
+        [
+          "manager-state",
+          "Interpret manager ACK inventory"
+        ],
+        [
+          "trace-output",
+          "Read the operational receipt stream"
+        ]
+      ]
+    },
+    {
+      "id": "empty-source",
+      "title": "Retain explicit empty source time state",
+      "description": "A source begins with zero packets and zero first/last times. raw_packet supplies real bounds only when a packet exists; EOS uses packets>0 as has_observation. Empty assigned input therefore closes with a false observation flag and its declared empty bounds.",
+      "ranges": [
+        {
+          "code": "global source_first = double_to_time(0);\nglobal source_last = double_to_time(0);"
+        }
+      ],
+      "links": [
+        [
+          "packet-times",
+          "Set times only from actual packet callbacks"
+        ],
+        [
+          "eos-send",
+          "Publish the explicit observation flag"
+        ]
+      ],
+      "concept": true
+    },
+    {
+      "id": "closed-window-to-emitter",
+      "title": "Follow closed input authorization to the shared emitter",
+      "description": "EOS sequence coverage and semantic preparation precede the manager’s commit. Owners then source sort the closed set and invoke the shared main lifecycle. Notice timestamps preserve source evidence time, while finite window emission occurs after all input completion and commit.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "if ( owner_prepared || |eos_seen|!=|expected_workers| ) return;"
+        },
+        {
+          "code": "if ( |global_fact_acks|<expected ) return;"
+        },
+        {
+          "code": "Cluster::publish(Cluster::proxy_topic,commit_window,view$id);"
+        },
+        {
+          "code": "facts=sort(facts,compare_facts);"
+        },
+        {
+          "code": "DNScat2::local_dispatch(o);"
+        }
+      ],
+      "links": [
+        [
+          "manager-decision",
+          "Read the closed window decision"
+        ],
+        [
+          "shared-pair",
+          "Trace the paired call into the shared main emitter"
+        ]
+      ]
+    },
+    {
+      "id": "original-query-epoch",
+      "title": "Follow the original owner query binding into a late pair",
+      "description": "The worker transports unbound metadata. During sorted reduction, the query obtains an owner admitted Frame and token_bindings retains it. The pair retrieves that original Frame before shared lifecycle processing, preserving the generation fence across replacement and expiry.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "o$request$generation=0; o$request$initial_key_hash=\"\"; o$request$context=\"\"; o$request$progressed=F;"
+        },
+        {
+          "code": "local bound=DNScat2::local_dispatch(o);"
+        },
+        {
+          "code": "token_bindings[f$key,f$token]=bound;"
+        },
+        {
+          "code": "o$request=token_bindings[f$key,f$token];"
+        }
+      ],
+      "links": [
+        [
+          "worker-unbound",
+          "Clear worker lifecycle bindings"
+        ],
+        [
+          "bind-query",
+          "Assign owner epochs in source order"
+        ],
+        [
+          "shared-pair",
+          "Apply the retained original query binding"
+        ]
+      ]
+    }
+  ],
+  "notice": {}
+}

@@ -131,7 +131,8 @@ class PackageIntegrityTests(unittest.TestCase):
                     'scripts/__load__.zeek', 'zkg.meta', 'LICENSE', 'CHANGELOG.md', 'PROVENANCE.md',
                     '.gitignore', '.github/workflows/package-validation.yml', 'tests/test_distribution.py',
                     'MODBUS-WRITE-REJECTIONS.md', 'modbus-cases.json', 'modbus_replay.py',
-                    'tests/test_modbus.py', 'modbus-validation-9.0.0.json', 'modbus-validation-9.0.1.json'}
+                    'tests/test_modbus.py', 'modbus-validation-9.0.0.json', 'modbus-validation-9.0.1.json',
+                    'scripts/dnscat2/main.zeek', 'scripts/dnscat2/cluster.zeek', 'docs/dnscat2.md'}
         for slug, name in [('illegal-function', 'Illegal_Function'),
                            ('illegal-data-address', 'Illegal_Data_Address'),
                            ('illegal-data-value', 'Illegal_Data_Value'),

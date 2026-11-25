@@ -26,7 +26,14 @@ class DistributionTests(unittest.TestCase):
                    'modbus-write-server-device-failure']
         self.assertEqual(loads, ['@load ./' + name for name in modules])
         self.assertEqual({p.name for p in (ROOT/'scripts').iterdir()},
-                         {'__load__.zeek'} | {name + '.zeek' for name in modules})
+                         {'__load__.zeek', 'dnscat2'} | {name + '.zeek' for name in modules})
+        available = ROOT/'scripts/dnscat2'
+        self.assertEqual({p.name for p in available.iterdir()}, {'main.zeek', 'cluster.zeek'})
+        for name, digest in {
+                'main.zeek': '5051f351e7ea3948a20791917f219d3416d0be8e6161e922345f4e600833dcd3',
+                'cluster.zeek': '0e0b3eface50940ff2db619eff99607e855fbe946876ea42c6a7c00f701ca81c',
+        }.items():
+            self.assertEqual(hashlib.sha256((available/name).read_bytes()).hexdigest(), digest)
         self.assertEqual(hashlib.sha256((ROOT/'scripts/pkinit-u2u.zeek').read_bytes()).hexdigest(),
                          '1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126')
         self.assertTrue((ROOT/'tests/fixtures/event-regressions.zeek').is_file())

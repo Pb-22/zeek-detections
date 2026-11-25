@@ -11,6 +11,12 @@ Zeek detection scripts with an explicit publisher-selected loader, versioned rel
 
 The detector identifies UnPAC-compatible ticket activity, not proof of NT-hash extraction. Detection conditions are preserved from the accepted Network_Detections version; release 1.0.2 removes its custom log output. The notice subject contains only `principal@realm`; the message describes the observed behavior.
 
+## dnscat2 source modules
+
+The [dnscat2 guide](docs/dnscat2.md) describes negotiation, session start and two way traffic across TXT, CNAME, MX, A and AAAA DNS replies. The interactive callouts explain bounded decoding, FIFO eviction, separate state budgets and generation handling.
+
+Load `scripts/dnscat2/main.zeek` explicitly for incremental standalone processing. The adjacent `cluster.zeek` entry processes assigned PCAPs through native workers and session owners. It emits findings after the inputs close and preserves the source evidence timestamp. The guide gives its finite job settings and node configuration.
+
 ## Notice-only output
 
 The detector emits `PKINIT_U2U::Self_Targeted_Ticket` through Zeek's existing Notice framework. Under the normal logging policy, it appears in `notice.log`. It creates no `pkinit_u2u.log` or other custom log stream. The notice includes the account in `sub`, the behavior in `msg`, and the qualifying TGS connection context. It does not export the former custom record's separate PKINIT connection UID, PKINIT source, service, ticket digest or elapsed-time fields.
