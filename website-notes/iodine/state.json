@@ -1,0 +1,1756 @@
+{
+  "schema_version": 1,
+  "path": "scripts/iodine/state.zeek",
+  "title": "iodine session state and Notice evidence",
+  "description": "Tracks version candidates, assigned user generations, exact DNS request and reply bindings, codec negotiation and bounded two way packet evidence. Completed DNS packets with matching ACKs or uniquely associated raw traffic qualify one CompatibleSession Notice per retained generation.",
+  "tags": [
+    "DNS",
+    "iodine",
+    "session lifecycle",
+    "fragment evidence",
+    "notice.log"
+  ],
+  "initialTopic": "notice-guard",
+  "topics": [
+    {
+      "id": "module",
+      "title": "Load the wire primitives into Iodine",
+      "description": "`@load ./wire` supplies DNSWire, byte slicing, codec decoding, zheader and the state limits. `module Iodine` places the records, pools and lifecycle functions in the shared Iodine namespace.",
+      "ranges": [
+        {
+          "code": "@load ./wire\nmodule Iodine;"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "fragment-slots",
+      "title": "Retain fragment fingerprints and compact metadata",
+      "description": "Fragment starts with sequence sentinel 99 and poisoned=F. Four initially empty tables index each fragment number: hashes stores sha256_hash(body), lengths stores its byte count, starts stores its first two bytes, and finals stores the final flag. These fields retain the evidence used for completion and conflict checks.",
+      "ranges": [
+        {
+          "code": "type Fragment: record {\nseq: count &default=99; poisoned: bool &default=F;\nhashes: table[count] of string &default=table();\nlengths: table[count] of count &default=table();\nstarts: table[count] of string &default=table();\nfinals: table[count] of bool &default=table();"
+        }
+      ],
+      "links": [
+        [
+          "fragment-store",
+          "Store the compact fragment evidence"
+        ],
+        [
+          "fragment-conflict",
+          "Compare repeated fragment evidence"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-status",
+      "title": "Initialize packet completion and acknowledgement state",
+      "description": "A fresh Fragment has complete=F, last=99, bytes=0 and acked=F. last identifies the final fragment after successful contiguous assembly; bytes records the qualifying packet length. up and down each receive an independent Fragment record.",
+      "ranges": [
+        {
+          "code": "complete: bool &default=F; last: count &default=99; bytes: count &default=0;\nacked: bool &default=F;\n};"
+        }
+      ],
+      "links": [
+        [
+          "fragment-qualify",
+          "Qualify contiguous packet metadata"
+        ],
+        [
+          "ack",
+          "Bind ACK to sequence and final fragment"
+        ]
+      ]
+    },
+    {
+      "id": "session-fields",
+      "title": "Keep generation identity and both packet directions",
+      "description": "Session requires client, server, suffix, assigned uid, epoch, version serial, version_token and touched time. login and downstream begin empty, upstream begins Base32 and done begins F. up and down each default to an empty Fragment. The default 32 fragment slots split into 16 upstream and 16 downstream slots.",
+      "ranges": [
+        {
+          "code": "type Session: record {\nclient: addr; server: addr; suffix: string; uid: count;\nepoch: count; serial: count; version_token: string; touched: time;\nlogin: string &default=\"\"; upstream: string &default=\"Base32\";\ndownstream: string &default=\"\"; done: bool &default=F;\nup: Fragment &default=[]; down: Fragment &default=[];"
+        }
+      ],
+      "links": [
+        [
+          "session-admit",
+          "Create the session from assigned candidate state"
+        ],
+        [
+          "fragment-budget",
+          "Apply the per direction slot bound"
+        ],
+        [
+          "notice-once",
+          "Retain the emitted generation"
+        ]
+      ]
+    },
+    {
+      "id": "raw-fields",
+      "title": "Keep optional raw destination and directional evidence",
+      "description": "rawserver is an optional address established by an I reply. rawquery begins empty and stores a SHA256 fingerprint of a raw login challenge. rawpaired begins F; rawup and rawdown begin zero and retain the latest qualifying body length for each direction.",
+      "ranges": [
+        {
+          "code": "rawserver: addr &optional; rawquery: string &default=\"\";\nrawpaired: bool &default=F; rawup: count &default=0; rawdown: count &default=0;\n};"
+        }
+      ],
+      "links": [
+        [
+          "raw-server",
+          "Read the observed raw server address"
+        ],
+        [
+          "raw-login",
+          "Pair raw login challenge fingerprints"
+        ],
+        [
+          "raw-data",
+          "Record bounded raw traffic"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-fields",
+      "title": "Track version candidates and their FIFO links",
+      "description": "Candidate requires client, server, suffix, version serial, token and touched time. assigned=F, uid=99 and epoch=0 represent the initial version request. A matched VACK assigns a uid and generation. Empty prev and following strings mark queue boundaries.",
+      "ranges": [
+        {
+          "code": "type Candidate: record {\nclient: addr; server: addr; suffix: string; serial: count; token: string;\nassigned: bool &default=F; uid: count &default=99; epoch: count &default=0;\ntouched: time; prev: string &default=\"\"; following: string &default=\"\";\n};"
+        }
+      ],
+      "links": [
+        [
+          "candidate-admit",
+          "Admit a candidate within its separate budget"
+        ],
+        [
+          "assigned-generation",
+          "Assign the returned user and generation"
+        ]
+      ]
+    },
+    {
+      "id": "pending-fields",
+      "title": "Retain the minimal reply binding",
+      "description": "Pending stores command, suffix, client, server and born time. switch_value defaults empty and carries only the codec option needed by a reply. candidate and session default empty; epoch defaults zero. protected defaults F, with empty prev and following queue links. The request callback consumes login digests and encoded fragment bodies locally.",
+      "ranges": [
+        {
+          "code": "type Pending: record {\ncommand: string; suffix: string; switch_value: string &default=\"\";\nclient: addr; server: addr; born: time; candidate: string &default=\"\";\nsession: string &default=\"\"; epoch: count &default=0;\nprotected: bool &default=F; prev: string &default=\"\"; following: string &default=\"\";\n};"
+        }
+      ],
+      "links": [
+        [
+          "pending-command",
+          "Retain only the codec switch value"
+        ],
+        [
+          "pending-admit",
+          "Admit within the shared pending budget"
+        ]
+      ]
+    },
+    {
+      "id": "state-tables",
+      "title": "Own candidates, pending transactions and sessions separately",
+      "description": "Three string keyed tables own Candidate, Pending and Session records. Each table has its own configured bound: candidate_limit defaults 256, pending_limit defaults 1024 and session_limit defaults 256. Assigned version candidates stay in candidates until login promotion or replacement; progressed sessions consume the session pool.",
+      "ranges": [
+        {
+          "code": "global candidates: table[string] of Candidate=table();\nglobal pending: table[string] of Pending=table();\nglobal sessions: table[string] of Session=table();"
+        }
+      ],
+      "links": [
+        [
+          "candidate-admit",
+          "Apply the candidate budget"
+        ],
+        [
+          "pending-admit",
+          "Apply the pending budget"
+        ],
+        [
+          "session-admit",
+          "Apply the session budget"
+        ]
+      ]
+    },
+    {
+      "id": "queue-heads",
+      "title": "Separate candidate FIFO and both pending classes",
+      "description": "chead and ctail delimit the candidate FIFO. phead and ptail each map F and T to their own pending FIFO boundaries. `p$protected` chooses the class. serial orders version observations; generation assigns distinct accepted VACK epochs.",
+      "ranges": [
+        {
+          "code": "global chead=\"\"; global ctail=\"\";\nglobal phead: table[bool] of string = { [F]=\"\", [T]=\"\" };\nglobal ptail: table[bool] of string = { [F]=\"\", [T]=\"\" };\nglobal serial: count=0; global generation: count=0;"
+        }
+      ],
+      "links": [
+        [
+          "pending-links",
+          "Append within the selected pending class"
+        ],
+        [
+          "candidate-links",
+          "Append the candidate FIFO"
+        ],
+        [
+          "assigned-generation",
+          "Advance the accepted generation"
+        ]
+      ]
+    },
+    {
+      "id": "health-counters",
+      "title": "Track occupancy peaks and resource outcomes",
+      "description": "pending_peak, candidate_peak and session_peak start at zero. degraded counts capacity eviction or refused admission, rejected_large records oversized input in the entry module, and integrity_errors counts broken queue invariants. The exit aggregate reports all six counters alongside current occupancy.",
+      "ranges": [
+        {
+          "code": "global pending_peak: count=0; global candidate_peak: count=0; global session_peak: count=0;\nglobal degraded: count=0; global rejected_large: count=0; global integrity_errors: count=0;"
+        }
+      ],
+      "links": [
+        [
+          "health-output",
+          "Print the aggregate health fields"
+        ]
+      ]
+    },
+    {
+      "id": "peaks",
+      "title": "Update the three occupancy high water marks",
+      "description": "peaks compares each owning table size with its retained maximum. Successful pending and candidate admission and session creation call this helper, so the counters capture peak simultaneous records in each pool.",
+      "ranges": [
+        {
+          "code": "function peaks()\n{\nif (|pending|>pending_peak) pending_peak=|pending|;\nif (|candidates|>candidate_peak) candidate_peak=|candidates|;\nif (|sessions|>session_peak) session_peak=|sessions|;\n}"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "pending-remove-guard",
+      "title": "Resolve pending membership and its protected class",
+      "description": "premove requires the key to exist. A missing key increments integrity_errors and returns. For a present record, the helper reads its protected flag to select the matching head and tail table entries.",
+      "ranges": [
+        {
+          "code": "function premove(key: string)\n{\nif (key !in pending) { ++integrity_errors; return; }\nlocal p=pending[key]; local pool=p$protected;"
+        }
+      ],
+      "links": [
+        [
+          "pending-remove-links",
+          "Repair adjacent links before deletion"
+        ]
+      ]
+    },
+    {
+      "id": "pending-remove-links",
+      "title": "Unlink pending records with fixed adjacent updates",
+      "description": "Removal patches the preceding record or class head, then the following record or class tail, and deletes pending[key]. A missing referenced neighbor increments integrity_errors. Each removal touches a fixed number of links; callers that find records by expiry or session identity still scan bounded tables.",
+      "ranges": [
+        {
+          "code": "if (p$prev!=\"\") { if (p$prev in pending) pending[p$prev]$following=p$following; else ++integrity_errors; }\nelse phead[pool]=p$following;\nif (p$following!=\"\") { if (p$following in pending) pending[p$following]$prev=p$prev; else ++integrity_errors; }\nelse ptail[pool]=p$prev;\ndelete pending[key];\n}"
+        }
+      ],
+      "links": [
+        [
+          "pending-expiry",
+          "Find expired pending records"
+        ],
+        [
+          "session-invalidate",
+          "Find pending records owned by a session"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-remove-guard",
+      "title": "Resolve a candidate before unlinking it",
+      "description": "cremove requires candidate membership, increments integrity_errors for a missing key and reads the Candidate record used for its adjacent links.",
+      "ranges": [
+        {
+          "code": "function cremove(key: string)\n{\nif (key !in candidates) { ++integrity_errors; return; }\nlocal c=candidates[key];"
+        }
+      ],
+      "links": [
+        [
+          "candidate-remove-links",
+          "Repair the candidate FIFO"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-remove-links",
+      "title": "Repair the candidate FIFO around a removed entry",
+      "description": "The helper updates a preceding candidate or chead and a following candidate or ctail, then deletes the record. Missing referenced neighbors increment integrity_errors. Head eviction and login promotion reuse this fixed set of link updates.",
+      "ranges": [
+        {
+          "code": "if (c$prev!=\"\") { if (c$prev in candidates) candidates[c$prev]$following=c$following; else ++integrity_errors; }\nelse chead=c$following;\nif (c$following!=\"\") { if (c$following in candidates) candidates[c$following]$prev=c$prev; else ++integrity_errors; }\nelse ctail=c$prev;\ndelete candidates[key];\n}"
+        }
+      ],
+      "links": [
+        [
+          "candidate-admit",
+          "Evict the oldest candidate at capacity"
+        ],
+        [
+          "session-admit",
+          "Remove a promoted candidate"
+        ]
+      ]
+    },
+    {
+      "id": "session-invalidate-guard",
+      "title": "Prepare removal of a retained session generation",
+      "description": "sinvalidate returns for an absent session. For a retained key, a local vector collects pending keys whose session field refers to that key. Pending records preserve their admission epoch until removal.",
+      "ranges": [
+        {
+          "code": "function sinvalidate(key: string)\n{\nif (key !in sessions) return;\n# Pending entries retain admission epoch, and removal also releases links.\nlocal remove: vector of string=vector();"
+        }
+      ],
+      "links": [
+        [
+          "session-invalidate",
+          "Release every owned pending record"
+        ]
+      ]
+    },
+    {
+      "id": "session-invalidate",
+      "title": "Scan pending bindings before deleting a session",
+      "description": "A full scan of the bounded pending table collects every transaction bound to key. A second pass calls premove for each collected key, preserving both FIFO classes while the table changes. The final delete releases the Session and its fragment metadata.",
+      "ranges": [
+        {
+          "code": "for (p in pending) if (pending[p]$session==key) remove[|remove|]=p;\nfor (i in remove) premove(remove[i]);\ndelete sessions[key];\n}"
+        }
+      ],
+      "links": [
+        [
+          "pending-remove-links",
+          "Unlink each collected transaction"
+        ],
+        [
+          "new-version-reset",
+          "Invalidate before replacing a generation"
+        ]
+      ]
+    },
+    {
+      "id": "pending-expiry",
+      "title": "Expire pending transactions by network time",
+      "description": "expire samples network_time() once. It scans pending and selects entries whose age from born reaches pending_ttl_seconds, which defaults 30secs. A local vector separates selection from mutation; premove releases each selected record and its FIFO links.",
+      "ranges": [
+        {
+          "code": "function expire()\n{\nlocal now=network_time(); local remove: vector of string=vector();\nfor (p in pending) if (now-pending[p]$born>=pending_ttl_seconds) remove[|remove|]=p;\nfor (i in remove) premove(remove[i]);"
+        }
+      ],
+      "links": [
+        [
+          "candidate-expiry",
+          "Expire candidate age"
+        ],
+        [
+          "session-expiry",
+          "Expire idle session state"
+        ],
+        [
+          "sweep",
+          "Run the scheduled expiry sweep"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-expiry",
+      "title": "Expire candidates from their last version progress",
+      "description": "The reused removal vector selects candidates whose touched age reaches candidate_ttl_seconds, default 30secs. cremove then releases the selected records. A VACK refreshes touched; an exact repeated request preserves the existing candidate record.",
+      "ranges": [
+        {
+          "code": "remove=vector();\nfor (c in candidates) if (now-candidates[c]$touched>=candidate_ttl_seconds) remove[|remove|]=c;\nfor (i in remove) cremove(remove[i]);"
+        }
+      ],
+      "links": [
+        [
+          "version-candidate",
+          "Preserve a retained version request"
+        ],
+        [
+          "assigned-generation",
+          "Refresh age on accepted VACK"
+        ]
+      ]
+    },
+    {
+      "id": "session-expiry",
+      "title": "Expire idle sessions and their pending bindings",
+      "description": "The session scan selects touched ages at least session_idle_seconds, default 300secs. sinvalidate removes each selected session and its pending transactions. A completed Session keeps done and generation deduplication for its retained lifetime; qualifying later traffic refreshes touched.",
+      "ranges": [
+        {
+          "code": "remove=vector();\nfor (s in sessions) if (now-sessions[s]$touched>=session_idle_seconds) remove[|remove|]=s;\nfor (i in remove) sinvalidate(remove[i]);\n}"
+        }
+      ],
+      "links": [
+        [
+          "session-invalidate",
+          "Release the selected generation"
+        ],
+        [
+          "notice-once",
+          "Mark emitted session state"
+        ]
+      ]
+    },
+    {
+      "id": "pending-admit",
+      "title": "Protect session pending entries under capacity pressure",
+      "description": "padd preserves an existing key. pending_limit=0 refuses admission and increments degraded. At capacity, phead[F] selects the oldest unprotected pending transaction for eviction; a table containing only protected entries refuses the new admission. Both eviction and refusal increment degraded. The default shared limit is 1024.",
+      "ranges": [
+        {
+          "code": "function padd(key: string, p: Pending): bool\n{\nif (key in pending) return T;\nif (pending_limit==0) { ++degraded; return F; }\nif (|pending|>=pending_limit) {\nif (phead[F]!=\"\") { premove(phead[F]); ++degraded; }\nelse { ++degraded; return F; }\n}"
+        }
+      ],
+      "links": [
+        [
+          "pending-links",
+          "Append admitted state to its class"
+        ],
+        [
+          "pending-remove-links",
+          "Unlink the selected unprotected head"
+        ]
+      ]
+    },
+    {
+      "id": "pending-links",
+      "title": "Append a pending transaction to its admission class",
+      "description": "p$protected selects a FIFO. The new record stores its previous tail, updates that tail record or the class head, becomes ptail[pool], and enters pending. peaks updates occupancy after admission. These assignments change a fixed number of links.",
+      "ranges": [
+        {
+          "code": "local pool=p$protected; p$prev=ptail[pool];\nif (p$prev!=\"\") pending[p$prev]$following=key; else phead[pool]=key;\nptail[pool]=key; pending[key]=p; peaks(); return T;\n}"
+        }
+      ],
+      "links": [
+        [
+          "pending-command",
+          "Protect pending commands for a session"
+        ],
+        [
+          "pending-integrity",
+          "Check both pending FIFO classes"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-admit",
+      "title": "Bound version candidates independently of sessions",
+      "description": "cadd preserves an existing candidate key. A zero candidate_limit refuses with degraded incremented. At the default limit of 256, cremove(chead) evicts the oldest retained candidate and increments degraded. Candidate pressure uses the candidate pool while progressed sessions retain their separate budget.",
+      "ranges": [
+        {
+          "code": "function cadd(key: string, c: Candidate): bool\n{\nif (key in candidates) return T;\nif (candidate_limit==0) { ++degraded; return F; }\nif (|candidates|>=candidate_limit) { cremove(chead); ++degraded; }"
+        }
+      ],
+      "links": [
+        [
+          "candidate-links",
+          "Append the admitted version candidate"
+        ],
+        [
+          "session-admit",
+          "Promote an assigned candidate"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-links",
+      "title": "Append candidates through the retained tail",
+      "description": "The new candidate stores ctail in prev. The previous tail gains a following link, or chead becomes the new key for an empty queue. ctail, candidates[key] and occupancy peaks then update. Promotion and expiry repair the same embedded links.",
+      "ranges": [
+        {
+          "code": "c$prev=ctail;\nif (ctail!=\"\") candidates[ctail]$following=key; else chead=key;\nctail=key; candidates[key]=c; peaks(); return T;\n}"
+        }
+      ],
+      "links": [
+        [
+          "candidate-remove-links",
+          "Unlink candidate records"
+        ],
+        [
+          "candidate-integrity",
+          "Check candidate FIFO structure"
+        ]
+      ]
+    },
+    {
+      "id": "session-key",
+      "title": "Key sessions by peers, suffix and assigned user",
+      "description": "skey formats client, server, suffix and uid with pipe separators. A session therefore persists across DNS source port changes while retaining the observed peer pair, suffix and assigned user context. epoch separately identifies a retained generation.",
+      "ranges": [
+        {
+          "code": "function skey(client: addr, server: addr, suffix: string, uid: count): string\n{ return fmt(\"%s|%s|%s|%d\",client,server,suffix,uid); }"
+        }
+      ],
+      "links": [
+        [
+          "transaction-key",
+          "Bind each DNS transaction to both ports"
+        ],
+        [
+          "epoch-guard",
+          "Require the pending admission epoch"
+        ]
+      ]
+    },
+    {
+      "id": "transaction-key",
+      "title": "Bind DNS replies to ports, ID and the exact question",
+      "description": "pkey includes client, server, cp, sp, d$id and sha256_hash(d$question). DNSWire.question contains the expanded label bytes with their original spelling plus qtype and qclass bytes. Request and response must produce this exact tuple to share pending state.",
+      "ranges": [
+        {
+          "code": "function pkey(client: addr, server: addr, cp: port, sp: port, d: DNSWire): string\n{ return fmt(\"%s|%s|%s|%s|%d|%s\",client,server,cp,sp,d$id,sha256_hash(d$question)); }"
+        }
+      ],
+      "links": [
+        [
+          "response-consume",
+          "Consume the matching pending transaction"
+        ],
+        [
+          "version-candidate",
+          "Key version candidates by exact question fingerprint"
+        ]
+      ]
+    },
+    {
+      "id": "suffix-guard",
+      "title": "Admit a normalized suffix with explicit syntax",
+      "description": "suffix_ok requires a nonempty suffix whose first character is a lowercase letter, digit or underscore. Remaining characters may also include dots and hyphens. The version request constructs the lowercase suffix before applying this predicate.",
+      "ranges": [
+        {
+          "code": "function suffix_ok(s: string): bool\n{ return |s|>0 && /^[a-z0-9_][a-z0-9_.-]*$/ == s; }"
+        }
+      ],
+      "links": [
+        [
+          "version-guard",
+          "Validate the version request"
+        ]
+      ]
+    },
+    {
+      "id": "suffix-prefix",
+      "title": "Find a stored suffix and concatenate command labels",
+      "description": "prefix_for tries suffix boundaries starting after the first label. It lowercases the joined suffix for comparison and returns the preceding labels concatenated with an empty separator. Exhausting the bounded name returns an empty prefix. Later command checks validate the prefix shape.",
+      "ranges": [
+        {
+          "code": "function prefix_for(labels: vector of string, suffix: string): string\n{\nlocal i: count=1;\nwhile (i<|labels|) {\nif (to_lower(joinlabels(labels,i,|labels|,\".\"))==suffix) return joinlabels(labels,0,i,\"\");\n++i;\n}\nreturn \"\";"
+        }
+      ],
+      "links": [
+        [
+          "session-scan",
+          "Resolve command context against observed peers"
+        ],
+        [
+          "login-candidate",
+          "Resolve login against assigned candidates"
+        ]
+      ]
+    },
+    {
+      "id": "login-shape",
+      "title": "Bound the login metadata text and split its fields",
+      "description": "login_ok bounds the body at 80 bytes and requires four hyphen separated fields shaped as two dotted numeric addresses followed by two decimal numbers. split_string must return exactly four fields before address validation starts.",
+      "ranges": [
+        {
+          "code": "function login_ok(s: string): bool\n{\nif (|s|>80 || !(/^[0-9.]+-[0-9.]+-[0-9]+-[0-9]+$/ == s)) return F;\nlocal fields=split_string(s,/-/); if (|fields|!=4) return F;\nlocal j: count=0;"
+        }
+      ],
+      "links": [
+        [
+          "login-values",
+          "Validate address octets and numeric ranges"
+        ],
+        [
+          "login-response",
+          "Retain accepted login metadata"
+        ]
+      ]
+    },
+    {
+      "id": "login-values",
+      "title": "Validate the login address octets and numeric fields",
+      "description": "The first two fields each require four decimal octets, each one to three characters and at most 255. The third field must be 1 through 65535 and the fourth 1 through 32. The accepted body becomes the literal login metadata in the Notice sub field.",
+      "ranges": [
+        {
+          "code": "while (j<2) {\nlocal parts=split_string(fields[j],/\\./); if (|parts|!=4) return F;\nfor (k in parts) if (|parts[k]|==0 || |parts[k]|>3 || to_count(parts[k])>255) return F;\n++j;\n}\nreturn to_count(fields[2])>0 && to_count(fields[2])<=65535 && to_count(fields[3])>=1 && to_count(fields[3])<=32;\n}"
+        }
+      ],
+      "links": [
+        [
+          "notice-fields",
+          "Format the current Notice fields"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-budget",
+      "title": "Bound fragment slots and reset on a new sequence",
+      "description": "fragment preserves the current record for an empty body or a fragment index at least 16 or bounded_fragment_slots_per_session/2. The default 32 slots allow 16 per direction. A changed sequence replaces the Fragment with a fresh record. A poisoned record returns early; accepted bodies receive a SHA256 fingerprint.",
+      "ranges": [
+        {
+          "code": "function fragment(f: Fragment, seq: count, frag: count, final: bool, body: string): Fragment\n{\nif (|body|==0 || frag>=16 || frag>=bounded_fragment_slots_per_session/2) return f;\nif (seq!=f$seq) f=[$seq=seq];\nif (f$poisoned) return f;\nlocal hash=sha256_hash(body);"
+        }
+      ],
+      "links": [
+        [
+          "fragment-conflict",
+          "Reject conflicting repeated evidence"
+        ],
+        [
+          "fragment-slots",
+          "Read retained fragment metadata"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-conflict",
+      "title": "Poison a sequence when repeated evidence conflicts",
+      "description": "For an already retained fragment index, the body fingerprint and final flag must equal the first evidence. A conflict sets poisoned=T and clears complete and acked. An identical repeat returns the existing metadata. A later sequence change creates fresh state.",
+      "ranges": [
+        {
+          "code": "if (frag in f$hashes) {\nif (f$hashes[frag]!=hash || f$finals[frag]!=final) { f$poisoned=T; f$complete=F; f$acked=F; }\nreturn f;\n}"
+        }
+      ],
+      "links": [
+        [
+          "fragment-budget",
+          "Reset at the next sequence"
+        ],
+        [
+          "ack",
+          "Count ACK only for a complete packet"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-store",
+      "title": "Store length, first two bytes and final flag",
+      "description": "A new slot retains sha256_hash(body), its byte length, at most the first two bytes through cut, and its final flag. The full decoded body stays local to the callback. These bounded tables support duplicate detection, total length and zheader qualification.",
+      "ranges": [
+        {
+          "code": "f$hashes[frag]=hash; f$lengths[frag]=|body|; f$starts[frag]=cut(body,0,|body|<2 ? |body| : 2); f$finals[frag]=final;"
+        }
+      ],
+      "links": [
+        [
+          "fragment-reassemble",
+          "Reconstruct only length and header bytes"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-requalify",
+      "title": "Clear packet evidence whenever a new fragment arrives",
+      "description": "Every newly retained fragment clears complete and acked, resets last to 99 and bytes to zero, then initializes local assembly metadata. This also requalifies a packet that had already completed or received an ACK when an additional fragment changes its evidence.",
+      "ranges": [
+        {
+          "code": "# A new fragment changes the packet's evidence, including an earlier final.\n# Requalify from all retained slots before a later ACK can count this packet.\nf$complete=F; f$acked=F; f$last=99; f$bytes=0;\nlocal i: count=0; local bytes: count=0; local head=\"\"; local last: count=99;"
+        }
+      ],
+      "links": [
+        [
+          "fragment-reassemble",
+          "Recheck contiguous retained slots"
+        ],
+        [
+          "fragment-qualify",
+          "Requalify the final packet"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-reassemble",
+      "title": "Walk consecutive slots from fragment zero",
+      "description": "The loop advances only while the next index exists and is below 16. It sums lengths and collects at most two leading bytes across fragments. The first final flag records last and ends the walk. A missing index stops assembly before later retained fragments.",
+      "ranges": [
+        {
+          "code": "while (i<16 && i in f$hashes) {\nbytes+=f$lengths[i];\nif (|head|<2) { local n=2-|head|; if (n>|f$starts[i]|) n=|f$starts[i]|; head+=cut(f$starts[i],0,n); }\nif (f$finals[i]) { last=i; break; } ++i;\n}"
+        }
+      ],
+      "links": [
+        [
+          "fragment-qualify",
+          "Require an exact final slot count"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-qualify",
+      "title": "Qualify an exact contiguous packet with zheader",
+      "description": "Completion requires a final fragment, exactly last+1 retained slots and zheader(head,bytes). zheader requires at least two header bytes, total length at least 8, compression method 8, window value at most 7, header word divisible by 31 and the dictionary flag clear. Success stores complete, last and total bytes.",
+      "ranges": [
+        {
+          "code": "if (last!=99 && |f$hashes|==last+1 && zheader(head,bytes)) { f$complete=T; f$last=last; f$bytes=bytes; }\nreturn f;\n}"
+        }
+      ],
+      "links": [
+        [
+          "fragment-requalify",
+          "Clear completion for additional evidence"
+        ],
+        [
+          "ack",
+          "Bind the peer ACK to this completed packet"
+        ]
+      ]
+    },
+    {
+      "id": "ack",
+      "title": "Bind acknowledgement to sequence and final fragment",
+      "description": "ack sets acked=T only when the Fragment is complete and its sequence and last fragment equal the supplied ACK fields. Request and reply paths extract those fields from their respective headers. A new fragment or conflicting duplicate clears the earlier acknowledgement.",
+      "ranges": [
+        {
+          "code": "function ack(f: Fragment, seq: count, frag: count): Fragment\n{ if (f$complete && f$seq==seq && f$last==frag) f$acked=T; return f; }"
+        }
+      ],
+      "links": [
+        [
+          "up-data",
+          "Read upstream fragment and downstream ACK bits"
+        ],
+        [
+          "down-data",
+          "Read downstream fragment and upstream ACK bits"
+        ],
+        [
+          "notice-guard",
+          "Require both completed ACK bound directions"
+        ]
+      ]
+    },
+    {
+      "id": "notice-guard",
+      "title": "Require login and qualified traffic for one retained generation",
+      "description": "maybe_notice requires a retained session with done=F and nonempty login. The raw branch requires rawpaired, positive rawup and rawdown lengths and an assigned rawserver. The DNS branch requires complete and acked in both up and down. These guards select the evidence used to construct Iodine::CompatibleSession.",
+      "ranges": [
+        {
+          "code": "function maybe_notice(key: string, raw: bool)\n{\nif (key !in sessions) return;\nlocal s=sessions[key]; if (s$done || s$login==\"\") return;\nif (raw) { if (!s$rawpaired || s$rawup==0 || s$rawdown==0 || !s?$rawserver) return; }\nelse if (!s$up$complete || !s$down$complete || !s$up$acked || !s$down$acked) return;"
+        }
+      ],
+      "links": [
+        [
+          "notice-values",
+          "Select the transport and directional values"
+        ],
+        [
+          "notice-once",
+          "Mark the generation after emission"
+        ],
+        [
+          "raw-data",
+          "Qualify raw body lengths"
+        ]
+      ]
+    },
+    {
+      "id": "notice-values",
+      "title": "Select the exact transport, codecs and counts",
+      "description": "DNS output takes bytes and last+1 fragment counts from up and down, codecs from upstream and downstream, transport=dns and dst=server. Raw output substitutes rawup and rawdown, one fragment per direction, Raw codecs, transport=raw and rawserver as dst.",
+      "ranges": [
+        {
+          "code": "local up=s$up$bytes; local down=s$down$bytes; local uf=s$up$last+1; local df=s$down$last+1;\nlocal uc=s$upstream; local dc=s$downstream; local transport=\"dns\"; local dst=s$server;\nif (raw) { up=s$rawup; down=s$rawdown; uf=1; df=1; uc=\"Raw\"; dc=\"Raw\"; transport=\"raw\"; dst=s$rawserver; }"
+        }
+      ],
+      "links": [
+        [
+          "notice-fields",
+          "Read the literal message and sub format"
+        ]
+      ]
+    },
+    {
+      "id": "notice-fields",
+      "title": "Emit the literal message and ordered evidence fields",
+      "description": "NOTICE selects CompatibleSession. msg is the fixed session pattern text. sub formats evidence=version,login,data_up,data_down followed by transport, suffix, assigned user, both codecs, literal version=0x00000502, login metadata, both byte counts and both fragment counts. src is client, dst is the selected observed server, and identifier combines the session key with epoch.",
+      "ranges": [
+        {
+          "code": "NOTICE([$note=CompatibleSession,\n$msg=\"iodine session pattern observed: matched negotiation followed by two way tunnel traffic\",\n$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),\n$src=s$client,$dst=dst,$identifier=fmt(\"%s|epoch=%d\",key,s$epoch)]);"
+        }
+      ],
+      "links": [
+        [
+          "notice-values",
+          "Trace the selected runtime values"
+        ],
+        [
+          "notice-once",
+          "Retain the emission flag"
+        ]
+      ]
+    },
+    {
+      "id": "notice-once",
+      "title": "Keep the emitted flag in the retained Session",
+      "description": "After NOTICE, sessions[key]$done becomes T. Both transport paths share this flag, yielding one emission per retained generation. The Session remains in its bounded pool with its deduplication state until idle expiry or generation replacement; qualifying traffic can refresh its idle time.",
+      "ranges": [
+        {
+          "code": "sessions[key]$done=T;\n}"
+        }
+      ],
+      "links": [
+        [
+          "session-expiry",
+          "Expire the retained idle generation"
+        ],
+        [
+          "new-version-reset",
+          "Replace a generation after a newer VACK"
+        ]
+      ]
+    },
+    {
+      "id": "request-start",
+      "title": "Build a transaction token before parsing the wire command",
+      "description": "request requires at least two labels and computes the exact peer, port, DNS ID and question token. A retained token returns immediately. The first character of the first label becomes the lowercase wire command used throughout context lookup.",
+      "ranges": [
+        {
+          "code": "function request(client: addr, server: addr, cp: port, sp: port, d: DNSWire)\n{\nif (|d$labels|<2) return;\nlocal token=pkey(client,server,cp,sp,d);\nif (token in pending) return;\nlocal first=d$labels[0]; local cmd=to_lower(cut(first,0,1));"
+        }
+      ],
+      "links": [
+        [
+          "transaction-key",
+          "Read the exact token format"
+        ],
+        [
+          "command-normalize",
+          "Normalize data only after scanning peers"
+        ]
+      ]
+    },
+    {
+      "id": "version-guard",
+      "title": "Validate version 1282 and derive the candidate identity",
+      "description": "A v request requires an 11 character first label. Its ten encoded characters must decode as six Base32 bytes with the first four equal to 1282, the 0x00000502 version. The remaining labels form a valid lowercase suffix. ct combines client, server, suffix and the exact question fingerprint.",
+      "ranges": [
+        {
+          "code": "if (cmd==\"v\" && |first|==11) {\nlocal ver=decode(cut(first,1,10),\"Base32\");\nlocal suffix=to_lower(joinlabels(d$labels,1,|d$labels|,\".\"));\nif (!ver$ok || |ver$data|!=6 || bytestring_to_count(cut(ver$data,0,4))!=1282 || !suffix_ok(suffix)) return;\nlocal ct=fmt(\"%s|%s|%s|%s\",client,server,suffix,sha256_hash(d$question));"
+        }
+      ],
+      "links": [
+        [
+          "suffix-guard",
+          "Apply the suffix syntax"
+        ],
+        [
+          "version-candidate",
+          "Admit the version observation"
+        ]
+      ]
+    },
+    {
+      "id": "version-candidate",
+      "title": "Preserve exact version retransmissions and admit pending VACK",
+      "description": "A scan of retained sessions finds any matching version_token and returns for that exact version request. Otherwise serial advances and cadd admits or preserves ct. An existing ct keeps its first Candidate serial and generation. padd retains an unprotected v transaction pointing to ct; candidate and pending admission use separate bounds.",
+      "ranges": [
+        {
+          "code": "# Exact retransmissions preserve the first version serial and generation.\nlocal active=F;\nfor (s in sessions) if (sessions[s]$version_token==ct) active=T;\nif (active) return;\n++serial;\nif (!cadd(ct,[$client=client,$server=server,$suffix=suffix,$serial=serial,$token=ct,$touched=network_time()])) return;\npadd(token,[$command=\"v\",$suffix=suffix,$client=client,$server=server,$born=network_time(),$candidate=ct]); return;"
+        }
+      ],
+      "links": [
+        [
+          "candidate-admit",
+          "Apply the candidate budget"
+        ],
+        [
+          "pending-admit",
+          "Apply the pending budget"
+        ],
+        [
+          "version-response",
+          "Validate the assigned user reply"
+        ]
+      ]
+    },
+    {
+      "id": "session-scan",
+      "title": "Search retained sessions within the observed peer pair",
+      "description": "The session scan first matches client and server, then finds that session suffix in the current labels. Each candidate context receives fresh decoded and id locals. A matching context supplies the prefix used by later command processing. This is a full scan bounded by session_limit.",
+      "ranges": [
+        {
+          "code": "local sid=\"\"; local prefix=\"\"; local uid: count=99;\nfor (s in sessions) {\nif (sessions[s]$client!=client || sessions[s]$server!=server) next;\nlocal pre=prefix_for(d$labels,sessions[s]$suffix); if (pre==\"\") next;\nlocal decoded: Decoded=[]; local id: count=99;"
+        }
+      ],
+      "links": [
+        [
+          "session-user",
+          "Decode a user while preserving the wire command"
+        ]
+      ]
+    },
+    {
+      "id": "session-user",
+      "title": "Resolve each command family to the assigned user",
+      "description": "l, p and n decode the prefix after its command as Base32 and read the first byte as id. i, s and o read the next Base32 character as id. A hexadecimal first character supplies the data userid directly. The first session whose uid equals id supplies sid, prefix and uid; cmd keeps its wire value throughout the scan.",
+      "ranges": [
+        {
+          "code": "if (cmd==\"l\" || cmd==\"p\" || cmd==\"n\") { decoded=decode(cut(pre,1,|pre|-1),\"Base32\"); if (decoded$ok && |decoded$data|>0) id=oct(decoded$data,0); }\nelse if (cmd==\"i\" || cmd==\"s\" || cmd==\"o\") { if (|pre|>1) id=b32val(cut(pre,1,1)); }\nelse if (/^[0-9a-f]$/ == cmd) { id=to_count(cmd,16); }\nif (id==sessions[s]$uid) { sid=s; prefix=pre; uid=id; break; }\n}"
+        }
+      ],
+      "links": [
+        [
+          "command-normalize",
+          "Rename data after the full scan"
+        ],
+        [
+          "session-key",
+          "Read the session identity"
+        ]
+      ]
+    },
+    {
+      "id": "command-normalize",
+      "title": "Rename hexadecimal data after peer lookup",
+      "description": "After every possible session context has been examined, a hexadecimal wire command becomes data. Delaying this assignment lets each shared peer userid comparison inspect the same original hexadecimal command.",
+      "ranges": [
+        {
+          "code": "# Keep the wire command unchanged while every possible userid is scanned.\nif (/^[0-9a-f]$/ == cmd) cmd=\"data\";"
+        }
+      ],
+      "links": [
+        [
+          "session-user",
+          "Inspect each user with the immutable wire command"
+        ],
+        [
+          "up-data",
+          "Decode the admitted data prefix"
+        ]
+      ]
+    },
+    {
+      "id": "login-candidate",
+      "title": "Choose the newest matching assigned login candidate",
+      "description": "For l with sid empty, the bounded candidate scan requires assigned state and the observed client and server. A matching suffix must leave a 32 character prefix. Its 31 Base32 payload characters must decode to 19 bytes with the assigned userid first. The greatest matching Candidate serial wins.",
+      "ranges": [
+        {
+          "code": "if (sid==\"\" && cmd==\"l\") {\nlocal chosen=\"\"; local latest: count=0;\nfor (c in candidates) {\nlocal ca=candidates[c]; if (!ca$assigned || ca$client!=client || ca$server!=server) next;\nlocal cpre=prefix_for(d$labels,ca$suffix); if (|cpre|!=32) next;\nlocal login=decode(cut(cpre,1,31),\"Base32\");\nif (login$ok && |login$data|==19 && oct(login$data,0)==ca$uid && ca$serial>latest) { chosen=c; latest=ca$serial; prefix=cpre; }\n}"
+        }
+      ],
+      "links": [
+        [
+          "session-admit",
+          "Promote the chosen candidate"
+        ],
+        [
+          "assigned-generation",
+          "Read the VACK assignment"
+        ]
+      ]
+    },
+    {
+      "id": "session-admit",
+      "title": "Promote assigned state within the session budget",
+      "description": "The chosen Candidate supplies suffix and uid for skey. A new key at session_limit, default 256, increments degraded and returns. Admission creates Session with the Candidate epoch, serial and token, refreshes touched, removes the Candidate through cremove and updates peaks. Its field defaults initialize codecs, fragments, raw evidence and done.",
+      "ranges": [
+        {
+          "code": "if (chosen!=\"\") {\nlocal admitted=candidates[chosen]; sid=skey(client,server,admitted$suffix,admitted$uid); uid=admitted$uid;\nif (sid !in sessions && |sessions|>=session_limit) { ++degraded; return; }\nsessions[sid]=[$client=client,$server=server,$suffix=admitted$suffix,$uid=admitted$uid,$epoch=admitted$epoch,$serial=admitted$serial,$version_token=admitted$token,$touched=network_time()];\ncremove(chosen); peaks();\n}"
+        }
+      ],
+      "links": [
+        [
+          "session-fields",
+          "Read the initial Session fields"
+        ],
+        [
+          "candidate-remove-links",
+          "Unlink the promoted candidate"
+        ]
+      ]
+    },
+    {
+      "id": "command-eligibility",
+      "title": "Require session context and a valid command stage",
+      "description": "Processing continues for a retained sid. l must decode to 19 Base32 bytes with the session uid in its first byte. Other commands require accepted login metadata. The command set admits l, i, s, o, p, data and n for the established context.",
+      "ranges": [
+        {
+          "code": "if (sid==\"\" || sid !in sessions) return;\nlocal sess=sessions[sid];\nif (cmd==\"l\") {\nlocal l=decode(cut(prefix,1,|prefix|-1),\"Base32\"); if (!l$ok || |l$data|!=19 || oct(l$data,0)!=sess$uid) return;\n} else if (sess$login==\"\") return;\nif (cmd !in set(\"l\",\"i\",\"s\",\"o\",\"p\",\"data\",\"n\")) return;"
+        }
+      ],
+      "links": [
+        [
+          "pending-command",
+          "Bind an eligible command to this epoch"
+        ],
+        [
+          "login-response",
+          "Store the accepted reply metadata"
+        ]
+      ]
+    },
+    {
+      "id": "pending-command",
+      "title": "Keep the codec option and protect the transaction epoch",
+      "description": "Only s or o with a seven character prefix retains cut(prefix,2,1) as switch_value. padd stores command, suffix, observed peers, born time, sid and the current epoch with protected=T. Successful admission refreshes touched. Pending retains this small option while login digests and fragment payloads remain local.",
+      "ranges": [
+        {
+          "code": "local switch_value=\"\";\nif ((cmd==\"s\" || cmd==\"o\") && |prefix|==7) switch_value=cut(prefix,2,1);\nif (!padd(token,[$command=cmd,$suffix=sess$suffix,$switch_value=switch_value,$client=client,$server=server,$born=network_time(),$session=sid,$epoch=sess$epoch,$protected=T])) return;\nsessions[sid]$touched=network_time();"
+        }
+      ],
+      "links": [
+        [
+          "pending-fields",
+          "Read the minimal Pending schema"
+        ],
+        [
+          "epoch-guard",
+          "Check the retained epoch on reply"
+        ],
+        [
+          "pending-admit",
+          "Preserve protected pending entries under pressure"
+        ]
+      ]
+    },
+    {
+      "id": "up-data-decode",
+      "title": "Decode upstream data using the negotiated codec",
+      "description": "data requires at least five prefix characters and a selected downstream codec. Three header characters must map to Base32 values at most 31. The payload beginning at offset 5 decodes with sess$upstream; an unsuccessful decode returns before fragment and ACK changes.",
+      "ranges": [
+        {
+          "code": "if (cmd==\"data\" && |prefix|>=5 && sess$downstream!=\"\") {\nlocal a=b32val(cut(prefix,1,1)); local b=b32val(cut(prefix,2,1)); local e=b32val(cut(prefix,3,1));\nif (a>31 || b>31 || e>31) return;\nlocal body=decode(cut(prefix,5,|prefix|-5),sess$upstream);\nif (!body$ok) return;"
+        }
+      ],
+      "links": [
+        [
+          "up-data",
+          "Apply the upstream header bits"
+        ]
+      ]
+    },
+    {
+      "id": "up-data",
+      "title": "Apply downstream ACK and upstream fragment coordinates",
+      "description": "The request acknowledges downstream sequence b%8 and final fragment e/2. It feeds upstream sequence a/4, fragment (a%4)*4+b/8 and final flag e%2==1 to fragment with the decoded body. The p branch handles a separate compact acknowledgement shape.",
+      "ranges": [
+        {
+          "code": "sessions[sid]$down=ack(sessions[sid]$down,b%8,e/2);\nsessions[sid]$up=fragment(sessions[sid]$up,a/4,(a%4)*4+b/8,e%2==1,body$data);\n} else if (cmd==\"p\" && |prefix|==8) {"
+        }
+      ],
+      "links": [
+        [
+          "ack",
+          "Require a complete matching packet"
+        ],
+        [
+          "fragment-budget",
+          "Bound upstream fragment evidence"
+        ],
+        [
+          "ping-ack",
+          "Decode the compact ping ACK"
+        ]
+      ]
+    },
+    {
+      "id": "ping-ack",
+      "title": "Decode the ping ACK and evaluate DNS evidence",
+      "description": "An eight character p prefix decodes its seven payload characters as Base32. Four decoded bytes with the assigned uid first acknowledge downstream sequence (byte1/16)%8 and fragment byte1%16. After request processing, maybe_notice(sid,F) evaluates the DNS completion guards.",
+      "ranges": [
+        {
+          "code": "local ping=decode(cut(prefix,1,7),\"Base32\");\nif (ping$ok && |ping$data|==4 && oct(ping$data,0)==uid) sessions[sid]$down=ack(sessions[sid]$down,(oct(ping$data,1)/16)%8,oct(ping$data,1)%16);\n}\nmaybe_notice(sid,F);\n}"
+        }
+      ],
+      "links": [
+        [
+          "notice-guard",
+          "Require both ACK bound directions"
+        ]
+      ]
+    },
+    {
+      "id": "response-consume",
+      "title": "Consume the exact pending transaction before reply handling",
+      "description": "response recomputes pkey and requires pending membership. It copies the Pending record, unlinks it through premove and then requires a valid decoded answer. body, sid and codec locals drive command handling. A matching reply consumes its pending token even when its answer fails later command checks.",
+      "ranges": [
+        {
+          "code": "function response(client: addr, server: addr, cp: port, sp: port, d: DNSWire)\n{\nlocal token=pkey(client,server,cp,sp,d); if (token !in pending) return;\nlocal p=pending[token]; premove(token);\nif (!d$answer$ok) return;\nlocal body=d$answer$data; local sid=p$session; local codec=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "transaction-key",
+          "Bind peers, ports and exact question"
+        ],
+        [
+          "version-response",
+          "Validate a version answer"
+        ],
+        [
+          "epoch-guard",
+          "Check the stored session epoch"
+        ]
+      ]
+    },
+    {
+      "id": "version-response",
+      "title": "Accept a bounded VACK and a newer version serial",
+      "description": "The v branch requires its Candidate to remain present, a nine byte body beginning VACK and an assigned byte at offset 8 at most 15. The observed peers, Candidate suffix and returned uid determine sid. For an existing sid, the Candidate serial must exceed the retained Session serial.",
+      "ranges": [
+        {
+          "code": "if (p$command==\"v\") {\nif (p$candidate !in candidates || |body|!=9 || cut(body,0,4)!=\"VACK\" || oct(body,8)>15) return;\nlocal c=candidates[p$candidate]; local uid=oct(body,8); sid=skey(client,server,c$suffix,uid);\nif (sid in sessions && c$serial<=sessions[sid]$serial) return;"
+        }
+      ],
+      "links": [
+        [
+          "assigned-generation",
+          "Assign the accepted version generation"
+        ],
+        [
+          "new-version-reset",
+          "Reset an existing session for a newer version"
+        ]
+      ]
+    },
+    {
+      "id": "assigned-generation",
+      "title": "Assign a fresh generation to the returned userid",
+      "description": "Each accepted VACK increments generation and writes assigned=T, the returned uid and the new epoch into its Candidate. touched refreshes to network_time(). A new session key leaves this assigned Candidate ready for login promotion.",
+      "ranges": [
+        {
+          "code": "++generation;\ncandidates[p$candidate]$assigned=T; candidates[p$candidate]$uid=uid; candidates[p$candidate]$epoch=generation;\ncandidates[p$candidate]$touched=network_time();"
+        }
+      ],
+      "links": [
+        [
+          "login-candidate",
+          "Select the assigned candidate for login"
+        ],
+        [
+          "new-version-reset",
+          "Replace existing session state"
+        ]
+      ]
+    },
+    {
+      "id": "new-version-reset",
+      "title": "Replace an existing user generation after newer VACK",
+      "description": "For an already retained sid, sinvalidate first removes that Session and every pending reference to it. The replacement Session receives the new epoch, Candidate serial and version token with fresh defaults. cremove releases the Candidate and peaks updates occupancy. The version reply then returns.",
+      "ranges": [
+        {
+          "code": "if (sid in sessions) {\nsinvalidate(sid);\nsessions[sid]=[$client=client,$server=server,$suffix=c$suffix,$uid=uid,$epoch=generation,$serial=c$serial,$version_token=c$token,$touched=network_time()];\ncremove(p$candidate); peaks();\n}\nreturn;\n}"
+        }
+      ],
+      "links": [
+        [
+          "session-invalidate",
+          "Scan and unlink the old pending references"
+        ],
+        [
+          "notice-once",
+          "Initialize a fresh emission lifetime"
+        ]
+      ]
+    },
+    {
+      "id": "epoch-guard",
+      "title": "Require the session and its pending admission epoch",
+      "description": "Every established command reply requires sid to remain in sessions and p$epoch to equal sessions[sid]$epoch. A replacement generation therefore requires pending state admitted for that same generation before reply processing continues.",
+      "ranges": [
+        {
+          "code": "if (sid !in sessions || p$epoch!=sessions[sid]$epoch) return;\nlocal s=sessions[sid];"
+        }
+      ],
+      "links": [
+        [
+          "pending-command",
+          "Capture the epoch when admitting the request"
+        ],
+        [
+          "new-version-reset",
+          "Replace the retained epoch"
+        ]
+      ]
+    },
+    {
+      "id": "login-response",
+      "title": "Store login metadata and select the initial downstream codec",
+      "description": "The l reply must pass login_ok before its body becomes `sessions[sid]$login`. NULL qtype 10 and PRIVATE qtype 65399 select Raw downstream bytes. Other carriers take d$answer$codec from the decoded wire answer. Subsequent command branches require retained login metadata.",
+      "ranges": [
+        {
+          "code": "if (p$command==\"l\") {\nif (!login_ok(body)) return;\nsessions[sid]$login=body;\n# NULL and PRIVATE carry raw reply bytes by their actual RR types.\nif (d$qtype==10 || d$qtype==65399) sessions[sid]$downstream=\"Raw\";\nelse sessions[sid]$downstream=d$answer$codec;\n} else if (s$login==\"\") return;"
+        }
+      ],
+      "links": [
+        [
+          "login-values",
+          "Read the metadata field bounds"
+        ],
+        [
+          "notice-guard",
+          "Require nonempty login evidence"
+        ]
+      ]
+    },
+    {
+      "id": "raw-server",
+      "title": "Read the IPv4 raw destination from the I reply",
+      "description": "A paired i reply beginning I supplies rawserver only when its body is exactly five bytes. bytestring_to_count and count_to_v4_addr convert the following four bytes into the observed raw server address.",
+      "ranges": [
+        {
+          "code": "else if (p$command==\"i\" && cut(body,0,1)==\"I\") {\nif (|body|==5) sessions[sid]$rawserver=count_to_v4_addr(bytestring_to_count(cut(body,1,4)));"
+        }
+      ],
+      "links": [
+        [
+          "raw-association",
+          "Associate a raw packet with exactly one session"
+        ]
+      ]
+    },
+    {
+      "id": "upstream-switch",
+      "title": "Accept an echoed upstream codec selection",
+      "description": "For s with a retained switch_value, b32val maps 5 to Base32, 6 to Base64, 26 to Base64u and 7 to Base128. The response body must equal the selected codec string before upstream changes.",
+      "ranges": [
+        {
+          "code": "} else if (p$command==\"s\" && p$switch_value!=\"\") {\nlocal value=b32val(p$switch_value);\nif (value==5) codec=\"Base32\"; else if (value==6) codec=\"Base64\"; else if (value==26) codec=\"Base64u\"; else if (value==7) codec=\"Base128\";\nif (codec!=\"\" && body==codec) sessions[sid]$upstream=codec;"
+        }
+      ],
+      "links": [
+        [
+          "pending-command",
+          "Retain the single switch character"
+        ],
+        [
+          "up-data-decode",
+          "Decode later data with the selected upstream codec"
+        ]
+      ]
+    },
+    {
+      "id": "downstream-switch",
+      "title": "Require option, response text and carrier codec agreement",
+      "description": "For o, the lowercase option maps t to Base32, s to Base64, u to Base64u, v to Base128 and r to Raw. downstream changes only when a mapped codec equals both the body text and d$answer$codec.",
+      "ranges": [
+        {
+          "code": "} else if (p$command==\"o\" && p$switch_value!=\"\") {\nlocal opt=to_lower(p$switch_value);\nif (opt==\"t\") codec=\"Base32\"; else if (opt==\"s\") codec=\"Base64\"; else if (opt==\"u\") codec=\"Base64u\"; else if (opt==\"v\") codec=\"Base128\"; else if (opt==\"r\") codec=\"Raw\";\nif (codec!=\"\" && body==codec && d$answer$codec==codec) sessions[sid]$downstream=codec;"
+        }
+      ],
+      "links": [
+        [
+          "pending-command",
+          "Retain the requested option"
+        ],
+        [
+          "down-data",
+          "Require the selected codec on data replies"
+        ]
+      ]
+    },
+    {
+      "id": "down-data",
+      "title": "Decode reply ACK bits and downstream fragment metadata",
+      "description": "A p or data reply requires at least two bytes, a selected downstream codec, matching d$answer$codec and a first byte at least 128. Byte zero acknowledges upstream sequence (byte0/16)%8 and final fragment byte0%16. Byte one supplies downstream sequence byte1/32, fragment (byte1/2)%16 and final bit byte1%2==1. The remaining bytes enter fragment. Processing refreshes touched and evaluates DNS Notice guards.",
+      "ranges": [
+        {
+          "code": "} else if ((p$command==\"p\" || p$command==\"data\") && |body|>=2 && s$downstream!=\"\" && d$answer$codec==s$downstream && oct(body,0)>=128) {\nsessions[sid]$up=ack(sessions[sid]$up,(oct(body,0)/16)%8,oct(body,0)%16);\nsessions[sid]$down=fragment(sessions[sid]$down,oct(body,1)/32,(oct(body,1)/2)%16,oct(body,1)%2==1,cut(body,2,|body|-2));\n}\nsessions[sid]$touched=network_time(); maybe_notice(sid,F);\n}"
+        }
+      ],
+      "links": [
+        [
+          "ack",
+          "Bind the upstream ACK"
+        ],
+        [
+          "fragment-requalify",
+          "Requalify downstream evidence"
+        ],
+        [
+          "notice-guard",
+          "Evaluate both packet directions"
+        ]
+      ]
+    },
+    {
+      "id": "raw-header",
+      "title": "Read the raw magic, userid and command nibble",
+      "description": "rawpacket requires four bytes and the prefix 0x10 0xd1 0x9e. The low nibble of byte three supplies uid; the high nibble supplies command as a multiple of 16. chosen and matches begin empty and zero before association.",
+      "ranges": [
+        {
+          "code": "function rawpacket(client: addr, server: addr, up: bool, payload: string)\n{\nif (|payload|<4 || cut(payload,0,3)!=\"\\x10\\xd1\\x9e\") return;\nlocal uid=oct(payload,3)%16; local command=(oct(payload,3)/16)*16;\nlocal chosen=\"\"; local matches: count=0;"
+        }
+      ],
+      "links": [
+        [
+          "raw-association",
+          "Select the unique observed session"
+        ]
+      ]
+    },
+    {
+      "id": "raw-association",
+      "title": "Require a unique logged in raw peer and user association",
+      "description": "The bounded session scan counts records matching client, assigned rawserver, raw server address, uid and nonempty login. Exactly one match supplies chosen. The body starts after the four byte raw header. Ambiguous associations return before raw state changes.",
+      "ranges": [
+        {
+          "code": "for (candidate_session in sessions) {\nlocal ss=sessions[candidate_session];\nif (ss$client==client && ss?$rawserver && ss$rawserver==server && ss$uid==uid && ss$login!=\"\") { chosen=candidate_session; ++matches; }\n}\nif (matches!=1) return;\nlocal body=cut(payload,4,|payload|-4); local s=sessions[chosen];"
+        }
+      ],
+      "links": [
+        [
+          "raw-server",
+          "Assign the raw server from a paired reply"
+        ],
+        [
+          "raw-login",
+          "Pair the challenge fingerprints"
+        ]
+      ]
+    },
+    {
+      "id": "raw-login",
+      "title": "Pair a request and distinct reply challenge fingerprint",
+      "description": "Command 16 with a 16 byte body records sha256_hash(body) as rawquery in the upstream direction. A downstream challenge with a retained request fingerprint and a different SHA256 fingerprint sets rawpaired=T. This comparison uses SHA256 as a compact equality fingerprint and records a distinct request and reply challenge pair used by the raw traffic guard.",
+      "ranges": [
+        {
+          "code": "if (command==16 && |body|==16) {\nif (up) sessions[chosen]$rawquery=sha256_hash(body);\nelse if (s$rawquery!=\"\" && s$rawquery!=sha256_hash(body)) sessions[chosen]$rawpaired=T;"
+        }
+      ],
+      "links": [
+        [
+          "raw-fields",
+          "Retain the challenge fingerprint"
+        ],
+        [
+          "raw-data",
+          "Require rawpaired for data evidence"
+        ]
+      ]
+    },
+    {
+      "id": "raw-data",
+      "title": "Record bounded raw data in both directions",
+      "description": "Command 32 requires total payload at most 4096 bytes, rawpaired and zheader(body,|body|). zheader requires a body length at least 8 and the supported compression header structure. The current direction stores its body length in rawup or rawdown. Command 48 requires exactly the four byte header. Accepted handling refreshes touched and maybe_notice(chosen,T) requires positive data lengths from both directions.",
+      "ranges": [
+        {
+          "code": "} else if (command==32 && |payload|<=4096 && s$rawpaired && zheader(body,|body|)) {\nif (up) sessions[chosen]$rawup=|body|; else sessions[chosen]$rawdown=|body|;\n} else if (command!=48 || |payload|!=4) return;\nsessions[chosen]$touched=network_time(); maybe_notice(chosen,T);\n}"
+        }
+      ],
+      "links": [
+        [
+          "notice-guard",
+          "Require the complete raw evidence set"
+        ],
+        [
+          "notice-values",
+          "Select raw Notice values"
+        ]
+      ]
+    },
+    {
+      "id": "integrity-start",
+      "title": "Prepare bounded queue diagnostics",
+      "description": "integrity starts with an empty visited set, chead as current, an empty previous key and count zero. The candidate and pending traversals validate the actual links retained by admission and removal.",
+      "ranges": [
+        {
+          "code": "function integrity()\n{\nlocal visited: set[string]=set(); local current=chead; local previous=\"\"; local n: count=0;"
+        }
+      ],
+      "links": [
+        [
+          "candidate-integrity",
+          "Check the candidate chain"
+        ],
+        [
+          "pending-integrity",
+          "Check protected and unprotected chains"
+        ]
+      ]
+    },
+    {
+      "id": "candidate-integrity",
+      "title": "Check candidate membership, back links, count and tail",
+      "description": "The candidate walk is bounded by the owning table size. A missing or repeated key increments integrity_errors and stops the walk. Each prev must equal the previous key. Final checks require the visited count to equal candidates size, previous to equal ctail and current to be empty. The visited set then resets for pending diagnostics.",
+      "ranges": [
+        {
+          "code": "while (current!=\"\" && n<=|candidates|) {\nif (current !in candidates || current in visited) { ++integrity_errors; break; }\nadd visited[current]; if (candidates[current]$prev!=previous) ++integrity_errors;\nprevious=current; current=candidates[current]$following; ++n;\n}\nif (n!=|candidates| || previous!=ctail || current!=\"\") ++integrity_errors;\nvisited=set();"
+        }
+      ],
+      "links": [
+        [
+          "candidate-links",
+          "Append candidate links"
+        ],
+        [
+          "candidate-remove-links",
+          "Repair links on removal"
+        ]
+      ]
+    },
+    {
+      "id": "pending-integrity",
+      "title": "Walk both pending FIFO classes with a shared visited set",
+      "description": "For each phead class, the traversal begins at its head and bounds iterations by pending size. Every key must exist and appear once across both chains. Each prev must match the preceding key, and protected must equal the selected pool. The walk advances through following while counting visits.",
+      "ranges": [
+        {
+          "code": "for (pool in phead) {\ncurrent=phead[pool]; previous=\"\"; n=0;\nwhile (current!=\"\" && n<=|pending|) {\nif (current !in pending || current in visited) { ++integrity_errors; break; }\nadd visited[current];\nif (pending[current]$prev!=previous || pending[current]$protected!=pool) ++integrity_errors;\nprevious=current; current=pending[current]$following; ++n;"
+        }
+      ],
+      "links": [
+        [
+          "pending-integrity-end",
+          "Compare tails and complete table coverage"
+        ],
+        [
+          "pending-links",
+          "Link admission into its protected class"
+        ]
+      ]
+    },
+    {
+      "id": "pending-integrity-end",
+      "title": "Require each pending tail and full table coverage",
+      "description": "Each class walk must end at its ptail with an empty current link. After both classes, the visited set size must equal pending table size. These checks catch orphaned entries and inconsistent queue boundaries through integrity_errors.",
+      "ranges": [
+        {
+          "code": "}\nif (previous!=ptail[pool] || current!=\"\") ++integrity_errors;\n}\nif (|visited|!=|pending|) ++integrity_errors;\n}"
+        }
+      ],
+      "links": [
+        [
+          "health-output",
+          "Report the diagnostic counter"
+        ]
+      ]
+    },
+    {
+      "id": "sweep",
+      "title": "Schedule expiry at the configured one second interval",
+      "description": "sweep calls expire and schedules another sweep when sweep_interval_seconds is positive. zeek_init schedules the first event under the same condition. The default interval is 1secs. Each expiry pass scans bounded owning tables; session removal can additionally scan pending bindings.",
+      "ranges": [
+        {
+          "code": "event sweep()\n{ expire(); if (sweep_interval_seconds>0secs) schedule sweep_interval_seconds { sweep() }; }\nevent zeek_init() { if (sweep_interval_seconds>0secs) schedule sweep_interval_seconds { sweep() }; }"
+        }
+      ],
+      "links": [
+        [
+          "pending-expiry",
+          "Expire by captured network time"
+        ],
+        [
+          "session-invalidate",
+          "Inspect the session invalidation scan"
+        ]
+      ]
+    },
+    {
+      "id": "done-health",
+      "title": "Run final expiry and queue integrity checks",
+      "description": "zeek_done calls expire and integrity before printing the aggregate health record. Expiry uses network_time() and the configured TTLs. A recent done Session remains retained when its idle age is below session_idle_seconds.",
+      "ranges": [
+        {
+          "code": "event zeek_done()\n{\nexpire(); integrity();"
+        }
+      ],
+      "links": [
+        [
+          "health-output",
+          "Read the single exit aggregate"
+        ],
+        [
+          "session-expiry",
+          "Apply the idle retention threshold"
+        ]
+      ]
+    },
+    {
+      "id": "health-output",
+      "title": "Print one IODINE_HEALTH aggregate at exit",
+      "description": "The print writes IODINE_HEALTH followed by a JSON object containing the three occupancy peaks, three final table sizes, degraded, rejected_large and integrity_errors. Final occupancy reflects the preceding expiry pass. The aggregate provides resource and queue diagnostics alongside Notice output.",
+      "ranges": [
+        {
+          "code": "print fmt(\"IODINE_HEALTH {\\\"pending_peak\\\":%d,\\\"candidate_peak\\\":%d,\\\"session_peak\\\":%d,\\\"pending_final\\\":%d,\\\"candidate_final\\\":%d,\\\"session_final\\\":%d,\\\"degraded\\\":%d,\\\"rejected_large\\\":%d,\\\"integrity_errors\\\":%d}\",pending_peak,candidate_peak,session_peak,|pending|,|candidates|,|sessions|,degraded,rejected_large,integrity_errors);\n}"
+        }
+      ],
+      "links": [
+        [
+          "health-counters",
+          "Read counter ownership"
+        ],
+        [
+          "done-health",
+          "Run the final cleanup and checks"
+        ]
+      ]
+    },
+    {
+      "id": "generation-lifecycle",
+      "title": "Follow version assignment through pending epoch binding",
+      "description": "A newer accepted VACK assigns generation to the Candidate. Login promotion copies its epoch into Session, request admission copies that epoch into Pending, and the reply guard compares it against the current Session. Replacing an existing session first removes all pending references to the old generation.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "++generation;\ncandidates[p$candidate]$assigned=T; candidates[p$candidate]$uid=uid; candidates[p$candidate]$epoch=generation;\ncandidates[p$candidate]$touched=network_time();"
+        },
+        {
+          "code": "sessions[sid]=[$client=client,$server=server,$suffix=admitted$suffix,$uid=admitted$uid,$epoch=admitted$epoch,$serial=admitted$serial,$version_token=admitted$token,$touched=network_time()];"
+        },
+        {
+          "code": "if (!padd(token,[$command=cmd,$suffix=sess$suffix,$switch_value=switch_value,$client=client,$server=server,$born=network_time(),$session=sid,$epoch=sess$epoch,$protected=T])) return;"
+        },
+        {
+          "code": "if (sid !in sessions || p$epoch!=sessions[sid]$epoch) return;"
+        }
+      ],
+      "links": [
+        [
+          "version-response",
+          "Require the newer version serial"
+        ],
+        [
+          "new-version-reset",
+          "Replace an existing generation"
+        ],
+        [
+          "epoch-guard",
+          "Check the pending admission epoch"
+        ]
+      ]
+    },
+    {
+      "id": "fragment-evidence-lifecycle",
+      "title": "Follow new evidence through completion and ACK qualification",
+      "description": "Compact fragment metadata records fingerprints, lengths, leading bytes and final flags. Every new slot clears completion and acknowledgement. The contiguous exact slot count and zheader checks rebuild completion; ack then requires that exact packet sequence and final fragment. Both directions must qualify before DNS emission.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "f$hashes[frag]=hash; f$lengths[frag]=|body|; f$starts[frag]=cut(body,0,|body|<2 ? |body| : 2); f$finals[frag]=final;"
+        },
+        {
+          "code": "f$complete=F; f$acked=F; f$last=99; f$bytes=0;"
+        },
+        {
+          "code": "if (last!=99 && |f$hashes|==last+1 && zheader(head,bytes)) { f$complete=T; f$last=last; f$bytes=bytes; }"
+        },
+        {
+          "code": "{ if (f$complete && f$seq==seq && f$last==frag) f$acked=T; return f; }"
+        },
+        {
+          "code": "else if (!s$up$complete || !s$down$complete || !s$up$acked || !s$down$acked) return;"
+        }
+      ],
+      "links": [
+        [
+          "fragment-requalify",
+          "Reset on each newly retained fragment"
+        ],
+        [
+          "fragment-qualify",
+          "Qualify the complete metadata"
+        ],
+        [
+          "notice-guard",
+          "Require both acknowledged packets"
+        ]
+      ]
+    },
+    {
+      "id": "bounded-queue-work",
+      "title": "Separate fixed link maintenance from bounded scans",
+      "description": "Admission appends through retained tails and removal patches adjacent links. Expiry still scans each bounded table, sinvalidate scans pending to collect session references, and command resolution scans retained contexts. Protected pending entries use their own FIFO while capacity eviction selects phead[F]. These are distinct operations with distinct bounds.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "if (p$prev!=\"\") { if (p$prev in pending) pending[p$prev]$following=p$following; else ++integrity_errors; }\nelse phead[pool]=p$following;\nif (p$following!=\"\") { if (p$following in pending) pending[p$following]$prev=p$prev; else ++integrity_errors; }\nelse ptail[pool]=p$prev;\ndelete pending[key];"
+        },
+        {
+          "code": "local pool=p$protected; p$prev=ptail[pool];\nif (p$prev!=\"\") pending[p$prev]$following=key; else phead[pool]=key;\nptail[pool]=key; pending[key]=p; peaks(); return T;"
+        },
+        {
+          "code": "c$prev=ctail;\nif (ctail!=\"\") candidates[ctail]$following=key; else chead=key;\nctail=key; candidates[key]=c; peaks(); return T;"
+        },
+        {
+          "code": "for (p in pending) if (now-pending[p]$born>=pending_ttl_seconds) remove[|remove|]=p;"
+        },
+        {
+          "code": "for (p in pending) if (pending[p]$session==key) remove[|remove|]=p;"
+        }
+      ],
+      "links": [
+        [
+          "pending-admit",
+          "Select eligible unprotected eviction"
+        ],
+        [
+          "candidate-admit",
+          "Keep a separate candidate budget"
+        ],
+        [
+          "pending-expiry",
+          "Scan age bounded records"
+        ],
+        [
+          "session-invalidate",
+          "Scan session references"
+        ]
+      ]
+    },
+    {
+      "id": "raw-evidence-lifecycle",
+      "title": "Follow unique association into raw evidence output",
+      "description": "Raw handling first selects exactly one session matching the observed peer and assigned user. A 16 byte challenge request fingerprint and a distinct reply fingerprint set rawpaired. Bounded zheader qualified command 32 bodies supply both directional lengths; the shared Notice guard and done flag control emission for the retained generation.",
+      "concept": true,
+      "ranges": [
+        {
+          "code": "if (ss$client==client && ss?$rawserver && ss$rawserver==server && ss$uid==uid && ss$login!=\"\") { chosen=candidate_session; ++matches; }"
+        },
+        {
+          "code": "if (matches!=1) return;"
+        },
+        {
+          "code": "if (command==16 && |body|==16) {\nif (up) sessions[chosen]$rawquery=sha256_hash(body);\nelse if (s$rawquery!=\"\" && s$rawquery!=sha256_hash(body)) sessions[chosen]$rawpaired=T;"
+        },
+        {
+          "code": "} else if (command==32 && |payload|<=4096 && s$rawpaired && zheader(body,|body|)) {\nif (up) sessions[chosen]$rawup=|body|; else sessions[chosen]$rawdown=|body|;"
+        },
+        {
+          "code": "if (raw) { if (!s$rawpaired || s$rawup==0 || s$rawdown==0 || !s?$rawserver) return; }"
+        }
+      ],
+      "links": [
+        [
+          "raw-association",
+          "Require unique context"
+        ],
+        [
+          "raw-login",
+          "Record the distinct challenge pair"
+        ],
+        [
+          "notice-once",
+          "Share the retained generation flag"
+        ]
+      ]
+    }
+  ],
+  "notice": {
+    "msg": [
+      "iodine session pattern observed: matched negotiation followed by two way tunnel traffic"
+    ],
+    "sub": [
+      "evidence=version,login,data_up,data_down;transport=",
+      {
+        "token": "%s",
+        "label": "Transport",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "transport",
+            "occurrence": 2
+          }
+        ]
+      },
+      ";suffix=",
+      {
+        "token": "%s",
+        "label": "DNS suffix",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "s$suffix"
+          }
+        ]
+      },
+      ";userid=",
+      {
+        "token": "%d",
+        "label": "Assigned user identifier",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "s$uid"
+          }
+        ]
+      },
+      ";upstream=",
+      {
+        "token": "%s",
+        "label": "Upstream codec",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "uc"
+          }
+        ]
+      },
+      ";downstream=",
+      {
+        "token": "%s",
+        "label": "Downstream codec",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "dc"
+          }
+        ]
+      },
+      ";version=0x00000502;login=",
+      {
+        "token": "%s",
+        "label": "Login metadata",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "s$login"
+          }
+        ]
+      },
+      ";up_bytes=",
+      {
+        "token": "%d",
+        "label": "Upstream byte count",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "up",
+            "occurrence": 5
+          }
+        ]
+      },
+      ";down_bytes=",
+      {
+        "token": "%d",
+        "label": "Downstream byte count",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "down",
+            "occurrence": 5
+          }
+        ]
+      },
+      ";up_fragments=",
+      {
+        "token": "%d",
+        "label": "Upstream fragment count",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "uf",
+            "occurrence": 3
+          }
+        ]
+      },
+      ";down_fragments=",
+      {
+        "token": "%d",
+        "label": "Downstream fragment count",
+        "sources": [
+          {
+            "anchor": "$sub=fmt(\"evidence=version,login,data_up,data_down;transport=%s;suffix=%s;userid=%d;upstream=%s;downstream=%s;version=0x00000502;login=%s;up_bytes=%d;down_bytes=%d;up_fragments=%d;down_fragments=%d\",transport,s$suffix,s$uid,uc,dc,s$login,up,down,uf,df),",
+            "text": "df"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -17,6 +17,12 @@ The [dnscat2 guide](docs/dnscat2.md) describes negotiation, session start and tw
 
 Load `scripts/dnscat2/main.zeek` explicitly for incremental standalone processing. The adjacent `cluster.zeek` entry processes assigned PCAPs through native workers and session owners. It emits findings after the inputs close and preserves the source evidence timestamp. The guide gives its finite job settings and node configuration.
 
+## iodine source module
+
+The [iodine guide](docs/iodine.md) explains paired negotiation, assigned userids, DNS and Raw UDP traffic, fragment and ACK evidence, and bounded state. Load `scripts/iodine/main.zeek` explicitly from a checkout of `main`, keeping its `state.zeek` and `wire.zeek` helpers beside it. The verified iodine engine is Zeek 9.0.1.
+
+[Selected test captures](https://github.com/Pb-22/Network_Detections/tree/main/iodine) include a clear DNS positive, a Raw UDP positive, a fragmented DNS positive, and two negative controls. Source linked reader notes explain the three files and the exact `Iodine::CompatibleSession` fields. The current release and publisher loader selection remain unchanged.
+
 ## Notice-only output
 
 The detector emits `PKINIT_U2U::Self_Targeted_Ticket` through Zeek's existing Notice framework. Under the normal logging policy, it appears in `notice.log`. It creates no `pkinit_u2u.log` or other custom log stream. The notice includes the account in `sub`, the behavior in `msg`, and the qualifying TGS connection context. It does not export the former custom record's separate PKINIT connection UID, PKINIT source, service, ticket digest or elapsed-time fields.

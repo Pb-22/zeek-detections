@@ -1,0 +1,911 @@
+{
+  "schema_version": 1,
+  "path": "scripts/iodine/wire.zeek",
+  "title": "iodine DNS wire decoding",
+  "description": "Parses bounded DNS questions, compressed names and actual answer records, then decodes iodine carrier bytes with the selected alphabet. Exact question identity and ordered answer pieces feed session correlation; a compact zlib header check supplies compressed framing evidence.",
+  "tags": [
+    "DNS",
+    "iodine",
+    "UDP",
+    "notice"
+  ],
+  "initialTopic": "dns-header",
+  "topics": [
+    {
+      "id": "module",
+      "title": "Export shared iodine wire settings",
+      "description": "module Iodine shares the entry and state namespace. export makes the following typed constants available to local configuration through Iodine:: names.",
+      "ranges": [
+        {
+          "code": "module Iodine;\nexport {"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "pool-budgets",
+      "title": "Set independent persistent pool limits",
+      "description": "pending_limit defaults to 1024, candidate_limit to 256 and session_limit to 256. Each count has &redef. The state module applies these separate capacities when retaining DNS transactions, negotiation candidates and sessions.",
+      "ranges": [
+        {
+          "code": "const pending_limit: count = 1024 &redef;\nconst candidate_limit: count = 256 &redef;\nconst session_limit: count = 256 &redef;"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "state-lifetimes",
+      "title": "Set candidate, pending and session lifetimes",
+      "description": "The interval constants default candidate and pending retention to 30secs and session idle retention to 300secs. &redef exposes each lifetime to local configuration. State expiry compares these intervals with retained packet times.",
+      "ranges": [
+        {
+          "code": "const candidate_ttl_seconds: interval = 30secs &redef;\nconst pending_ttl_seconds: interval = 30secs &redef;\nconst session_idle_seconds: interval = 300secs &redef;"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "dns-budgets",
+      "title": "Bound expanded names, records and pointer jumps",
+      "description": "The defaults admit expanded DNS names through 255 bytes, at most 16 records across answer, authority and additional sections, and at most 10 compression pointer jumps per name. &redef exposes each count. These guards bound name expansion and record traversal for an admitted datagram.",
+      "ranges": [
+        {
+          "code": "const max_dns_name_bytes: count = 255 &redef;\nconst max_dns_records: count = 16 &redef;\nconst max_dns_pointer_jumps: count = 10 &redef;"
+        }
+      ],
+      "links": [
+        [
+          "name-pointer",
+          "Apply the pointer jump bound"
+        ],
+        [
+          "name-label-guard",
+          "Apply the expanded name bound"
+        ],
+        [
+          "dns-record-count",
+          "Bound the full record walk"
+        ]
+      ]
+    },
+    {
+      "id": "datagram-budget",
+      "title": "Set the UDP datagram byte limit",
+      "description": "max_datagram_bytes defaults to 8192 and has &redef. The entry handler enforces this limit before Raw signature routing or DNS wire decoding, bounding the input byte string reaching these helpers.",
+      "ranges": [
+        {
+          "code": "const max_datagram_bytes: count = 8192 &redef;"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "fragment-sweep-settings",
+      "title": "Set fragment metadata and sweep budgets",
+      "description": "bounded_fragment_slots_per_session defaults to 32 and sweep_interval_seconds to 1secs. The state module divides the fragment budget between upstream and downstream metadata and uses the interval for cleanup scheduling; the entry handler uses the same interval for its expiry deadline.",
+      "ranges": [
+        {
+          "code": "const bounded_fragment_slots_per_session: count = 32 &redef;\nconst sweep_interval_seconds: interval = 1secs &redef;\n}"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "cut",
+      "title": "Translate zero based slices to sub_bytes",
+      "description": "cut accepts a zero based byte offset o and length n. It returns an empty string when o exceeds the string or n exceeds the remaining bytes. The o+1 argument translates the accepted offset to sub_bytes, whose positions start at one. Checking o first keeps the remaining length subtraction within the string.",
+      "ranges": [
+        {
+          "code": "function cut(s: string, o: count, n: count): string\n{ if (o > |s| || n > |s|-o) return \"\"; return sub_bytes(s,o+1,n); }"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "oct",
+      "title": "Read one unsigned octet",
+      "description": "oct selects one byte through cut and converts the byte string with bytestring_to_count. Parser callers establish the enclosing bounds before interpreting length, flag, alphabet or header fields.",
+      "ranges": [
+        {
+          "code": "function oct(s: string, o: count): count\n{ return bytestring_to_count(cut(s,o,1)); }"
+        }
+      ],
+      "links": [
+        [
+          "cut",
+          "Read the bounded slice convention"
+        ]
+      ]
+    },
+    {
+      "id": "u16",
+      "title": "Read a two byte wire integer",
+      "description": "u16 selects two consecutive bytes at a zero based offset and converts their network byte order value with bytestring_to_count. DNS IDs, counts, flags, types, classes, lengths and answer ranks use this helper.",
+      "ranges": [
+        {
+          "code": "function u16(s: string, o: count): count\n{ return bytestring_to_count(cut(s,o,2)); }"
+        }
+      ],
+      "links": [
+        [
+          "cut",
+          "Apply the bounded slice helper"
+        ]
+      ]
+    },
+    {
+      "id": "chr",
+      "title": "Construct an octet from its numeric value",
+      "description": "chr formats n as a hexadecimal string with %02x and converts it with hexstr_to_bytestring. Decoder output octets, DNS label lengths and extended alphabet bytes use this representation.",
+      "ranges": [
+        {
+          "code": "function chr(n: count): string { return hexstr_to_bytestring(fmt(\"%02x\",n)); }"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "base32-alphabet",
+      "title": "Define iodine Base32 symbol values",
+      "description": "b32 assigns values 0 through 31 in the exact order abcdefghijklmnopqrstuvwxyz012345. Both Base32 decoding and single symbol command fields use this iodine alphabet.",
+      "ranges": [
+        {
+          "code": "const b32 = \"abcdefghijklmnopqrstuvwxyz012345\";"
+        }
+      ],
+      "links": [
+        [
+          "base32-value",
+          "Convert one Base32 symbol"
+        ]
+      ]
+    },
+    {
+      "id": "base64-alphabets",
+      "title": "Define iodine Base64 and Base64u symbol order",
+      "description": "b64 uses `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789+` in that exact order. b64u uses the same ordering with _ as its final symbol. The decoder assigns six bits to each symbol and preserves case for these alphabets.",
+      "ranges": [
+        {
+          "code": "const b64 = \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789+\";\nconst b64u = \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789_\";"
+        }
+      ],
+      "links": [
+        [
+          "decode-codec",
+          "Select the requested alphabet"
+        ]
+      ]
+    },
+    {
+      "id": "base128-prefix",
+      "title": "Start the byte oriented Base128 alphabet",
+      "description": "b128 begins with lowercase letters, uppercase letters and digits, in that order. The initialization handler appends byte values 188 through 253 to complete the 128 symbol alphabet.",
+      "ranges": [
+        {
+          "code": "global b128 = \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\";"
+        }
+      ],
+      "links": [
+        [
+          "alphabet-init",
+          "Append the extended alphabet bytes"
+        ]
+      ]
+    },
+    {
+      "id": "decoded-record",
+      "title": "Return decoded bytes with explicit validity",
+      "description": "Decoded defaults ok to F and data and codec to empty strings. Successful decoding returns ok=T with the local output bytes and exact codec name. Returning [] uses these failure defaults.",
+      "ranges": [
+        {
+          "code": "type Decoded: record { ok: bool &default=F; data: string &default=\"\"; codec: string &default=\"\"; };"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "base32-value",
+      "title": "Convert a single case folded Base32 symbol",
+      "description": "b32val lowercases its input and searches b32 with find_str. A missing symbol or an input length other than one returns the sentinel 99. A valid symbol becomes its zero based count value through int_to_count.",
+      "ranges": [
+        {
+          "code": "function b32val(s: string): count\n{ local i=find_str(b32,to_lower(s)); if (i<0 || |s|!=1) return 99; return int_to_count(i); }"
+        }
+      ],
+      "links": [
+        [
+          "base32-alphabet",
+          "Read the exact symbol order"
+        ]
+      ]
+    },
+    {
+      "id": "decode-raw",
+      "title": "Pass Raw carrier bytes through directly",
+      "description": "decode returns Raw input as data with ok=T and codec=Raw. This branch preserves the carrier bytes directly; the remaining branches select a symbol alphabet and build decoded bytes.",
+      "ranges": [
+        {
+          "code": "function decode(s: string, codec: string): Decoded\n{\nif (codec==\"Raw\") return [$ok=T,$data=s,$codec=codec];"
+        }
+      ],
+      "links": [
+        [
+          "decoded-record",
+          "Read the decoder result fields"
+        ]
+      ]
+    },
+    {
+      "id": "decode-codec",
+      "title": "Select codec width and reject unknown names",
+      "description": "Base32 begins with b32 and five bits per symbol. Base64 and Base64u select their respective alphabets and six bits. Base128 selects b128 and seven bits. Any other codec name returns the default invalid Decoded record.",
+      "ranges": [
+        {
+          "code": "local alphabet=b32; local width: count=5;\nif (codec==\"Base64\") { alphabet=b64; width=6; }\nelse if (codec==\"Base64u\") { alphabet=b64u; width=6; }\nelse if (codec==\"Base128\") { alphabet=b128; width=7; }\nelse if (codec!=\"Base32\") return [];"
+        }
+      ],
+      "links": [
+        [
+          "base64-alphabets",
+          "Read both six bit alphabets"
+        ],
+        [
+          "base128-prefix",
+          "Read the extended alphabet construction"
+        ]
+      ]
+    },
+    {
+      "id": "decode-local-state",
+      "title": "Allocate local decoding state",
+      "description": "acc, bits, out and i belong to this decode call. scale starts at 32, becomes 64 for six bit symbols or 128 for seven bit symbols. The loop visits the encoded string once, accumulating output in a local string that the caller receives with the decoded result.",
+      "ranges": [
+        {
+          "code": "local acc: count=0; local bits: count=0; local out=\"\";\nlocal i: count=0; local scale: count=32;\nif (width==6) scale=64; else if (width==7) scale=128;\nwhile (i<|s|) {"
+        }
+      ],
+      "links": [
+        [
+          "decode-symbol",
+          "Validate each encoded symbol"
+        ]
+      ]
+    },
+    {
+      "id": "decode-symbol",
+      "title": "Validate and accumulate each encoded symbol",
+      "description": "The decoder reads one byte, folds case only for Base32 and finds its position in the selected alphabet. A missing symbol returns an invalid result immediately. Multiplication by scale shifts the retained bits, the symbol index adds the new value, and bits advances by the codec width.",
+      "ranges": [
+        {
+          "code": "local c=cut(s,i,1); if (codec==\"Base32\") c=to_lower(c);\nlocal v=find_str(alphabet,c); if (v<0) return [];\nacc=acc*scale+int_to_count(v); bits+=width;"
+        }
+      ],
+      "links": [
+        [
+          "decode-octet",
+          "Extract complete output bytes"
+        ]
+      ]
+    },
+    {
+      "id": "decode-octet",
+      "title": "Emit complete bytes and retain residual bits",
+      "description": "When at least eight bits are available, the decoder subtracts eight from bits and builds 2 raised to that remaining count as divisor. acc/divisor supplies one output octet through chr; acc%divisor retains the residual low bits. Advancing i processes the next encoded byte.",
+      "ranges": [
+        {
+          "code": "if (bits>=8) { bits-=8; local divisor: count=1; local j: count=0; while (j<bits) { divisor=divisor*2; ++j; } out+=chr(acc/divisor); acc=acc%divisor; }\n++i;\n}"
+        }
+      ],
+      "links": [
+        [
+          "chr",
+          "Construct the output octet"
+        ]
+      ]
+    },
+    {
+      "id": "decode-result",
+      "title": "Return complete decoded bytes and codec",
+      "description": "The result marks decoding successful after all symbols pass their alphabet checks. data contains the complete output bytes accumulated in out; any final partial octet remains outside data. codec records the selected name for later carrier consistency checks.",
+      "ranges": [
+        {
+          "code": "return [$ok=T,$data=out,$codec=codec];\n}"
+        }
+      ],
+      "links": [
+        [
+          "piece-codec",
+          "Require one codec across answer pieces"
+        ]
+      ]
+    },
+    {
+      "id": "name-record",
+      "title": "Represent expanded name bytes and encoded end",
+      "description": "Name defaults to invalid with end zero, empty labels and empty raw. A valid name returns literal label bytes, an expanded length prefixed raw form ending in a root byte, and end for the original encoded name’s next field.",
+      "ranges": [
+        {
+          "code": "type Name: record { ok: bool &default=F; end: count &default=0; labels: vector of string &default=vector(); raw: string &default=\"\"; };"
+        }
+      ],
+      "links": [
+        [
+          "name-root",
+          "Return the expanded name and encoded end"
+        ]
+      ]
+    },
+    {
+      "id": "name-local-state",
+      "title": "Initialize bounded name traversal",
+      "description": "name starts at the supplied zero based offset. pos follows labels or compression pointers; stop retains the original encoded end. jumps and seen track traversal, labels and raw build the expanded name, and expanded starts at one to reserve the terminating root byte.",
+      "ranges": [
+        {
+          "code": "function name(s: string, start: count): Name\n{\nlocal pos=start; local stop: count=0; local jumps: count=0;\nlocal seen: set[count]=set(); local labels: vector of string=vector();\nlocal raw=\"\"; local expanded: count=1;\nwhile (pos<|s|) {"
+        }
+      ],
+      "links": [
+        [
+          "name-cycle",
+          "Reject a repeated parse position"
+        ],
+        [
+          "name-pointer",
+          "Follow bounded compression pointers"
+        ]
+      ]
+    },
+    {
+      "id": "name-cycle",
+      "title": "Reject a repeated name parse position",
+      "description": "Each loop checks pos against the local seen set before reading its octet, then records the position. Revisiting a label or pointer position returns an invalid Name, terminating cyclic compression paths.",
+      "ranges": [
+        {
+          "code": "if (pos in seen) return []; add seen[pos];\nlocal n=oct(s,pos);"
+        }
+      ],
+      "links": [
+        [
+          "name-pointer",
+          "Apply the separate pointer jump cap"
+        ]
+      ]
+    },
+    {
+      "id": "name-pointer",
+      "title": "Follow compression pointers with a jump cap",
+      "description": "An octet at least 192 selects a two byte compression pointer. The guard requires both bytes and available jump budget. The first pointer fixes stop at pos+2; its low six bits and the next octet form the target offset. Incrementing jumps and next resumes traversal at that target. The loop bounds also reject targets outside the message.",
+      "ranges": [
+        {
+          "code": "if (n>=192) {\nif (pos+2>|s| || jumps>=max_dns_pointer_jumps) return [];\nif (stop==0) stop=pos+2;\npos=(n%64)*256+oct(s,pos+1); ++jumps; next;\n}"
+        }
+      ],
+      "links": [
+        [
+          "dns-budgets",
+          "Configure the default 10 pointer jumps"
+        ],
+        [
+          "name-cycle",
+          "Check repeated target positions"
+        ]
+      ]
+    },
+    {
+      "id": "name-root",
+      "title": "Finish at the root and preserve the encoded end",
+      "description": "The parser advances past the length octet. A zero octet finishes the name, using this position as stop for an uncompressed name or retaining the first pointer end. The returned raw string appends the root byte to expanded labels, so compression layout resolves to the same expanded representation.",
+      "ranges": [
+        {
+          "code": "++pos;\nif (n==0) { if (stop==0) stop=pos; return [$ok=T,$end=stop,$labels=labels,$raw=raw+\"\\x00\"]; }"
+        }
+      ],
+      "links": [
+        [
+          "question-identity",
+          "Build question identity from expanded bytes"
+        ]
+      ]
+    },
+    {
+      "id": "name-label-guard",
+      "title": "Validate label length, bounds and expanded size",
+      "description": "The guard admits label lengths through 63, requires all label bytes inside s and requires expanded+n+1 at most max_dns_name_bytes. The reserved root byte is already included in expanded. Values 64 through 191 reject here, while pointer octets use their own branch.",
+      "ranges": [
+        {
+          "code": "if (n>63 || pos+n>|s| || expanded+n+1>max_dns_name_bytes) return [];"
+        }
+      ],
+      "links": [
+        [
+          "dns-budgets",
+          "Read the default 255 byte name cap"
+        ]
+      ]
+    },
+    {
+      "id": "name-label",
+      "title": "Append literal label bytes or reject exhaustion",
+      "description": "The parser appends the label to labels, adds its length octet and contents to raw, and advances both expanded and pos. Falling out of the message before a terminating root returns an invalid Name. Literal label case remains in both expanded outputs.",
+      "ranges": [
+        {
+          "code": "labels[|labels|]=cut(s,pos,n); raw+=chr(n)+cut(s,pos,n); expanded+=n+1; pos+=n;\n}\nreturn [];\n}"
+        }
+      ],
+      "links": [
+        [
+          "name-record",
+          "Read the name result fields"
+        ]
+      ]
+    },
+    {
+      "id": "join-labels",
+      "title": "Join an exclusive range of labels",
+      "description": "joinlabels copies labels from first through last exclusive, placing sep only between entries. Callers choose an empty separator for encoded carrier chunks or a dot separator for a domain suffix. The caller supplies the label range.",
+      "ranges": [
+        {
+          "code": "function joinlabels(labels: vector of string, first: count, last: count, sep: string): string\n{\nlocal s=\"\"; local i=first;\nwhile (i<last) { if (i>first) s+=sep; s+=labels[i]; ++i; } return s;\n}"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "marker-input",
+      "title": "Read the carrier marker byte",
+      "description": "marked requires at least one byte, lowercases the first byte into mark and starts codec empty. host selects the hostname marker family; text carriers select the other family. Payload bytes retain their original case for the decoder.",
+      "ranges": [
+        {
+          "code": "function marked(s: string, host: bool): Decoded\n{\nif (|s|<1) return [];\nlocal mark=to_lower(cut(s,0,1)); local codec=\"\";"
+        }
+      ],
+      "links": [
+        [
+          "hostname-markers",
+          "Select hostname codec markers"
+        ],
+        [
+          "text-markers",
+          "Select text codec markers"
+        ]
+      ]
+    },
+    {
+      "id": "hostname-markers",
+      "title": "Map hostname carrier markers to codecs",
+      "description": "With host true, h selects Base32, i selects Base64, j selects Base64u and k selects Base128. These markers prefix the concatenated encoded labels of a CNAME, MX or SRV target.",
+      "ranges": [
+        {
+          "code": "if (host) {\nif (mark==\"h\") codec=\"Base32\"; else if (mark==\"i\") codec=\"Base64\";\nelse if (mark==\"j\") codec=\"Base64u\"; else if (mark==\"k\") codec=\"Base128\";\n} else {"
+        }
+      ],
+      "links": [
+        [
+          "name-carrier-decode",
+          "Decode the target label payload"
+        ]
+      ]
+    },
+    {
+      "id": "text-markers",
+      "title": "Map text carrier markers to codecs",
+      "description": "The text family maps t to Base32, s to Base64, u to Base64u, v to Base128 and r to Raw. The DNS TXT branch joins its character strings before applying this marker map.",
+      "ranges": [
+        {
+          "code": "if (mark==\"t\") codec=\"Base32\"; else if (mark==\"s\") codec=\"Base64\";\nelse if (mark==\"u\") codec=\"Base64u\"; else if (mark==\"v\") codec=\"Base128\"; else if (mark==\"r\") codec=\"Raw\";\n}"
+        }
+      ],
+      "links": [
+        [
+          "txt-carrier",
+          "Join TXT character strings"
+        ]
+      ]
+    },
+    {
+      "id": "marker-decode",
+      "title": "Remove the marker and decode the remaining bytes",
+      "description": "cut starts at offset one and selects the remaining |s|-1 bytes, removing exactly the marker byte. decode applies the selected codec; an unrecognized marker leaves codec empty and reaches decode’s invalid codec return.",
+      "ranges": [
+        {
+          "code": "return decode(cut(s,1,|s|-1),codec);\n}"
+        }
+      ],
+      "links": [
+        [
+          "decode-codec",
+          "Select the codec or return invalid"
+        ]
+      ]
+    },
+    {
+      "id": "dns-record",
+      "title": "Carry DNS identity and an optional decoded answer",
+      "description": "DNSWire stores validity, reply role, ID, type, class, question labels and serialized question bytes. answer defaults to an invalid Decoded record. An accepted envelope can therefore carry question metadata while its answer field remains invalid until a complete supported carrier qualifies.",
+      "ranges": [
+        {
+          "code": "type DNSWire: record {\nok: bool &default=F; reply: bool &default=F; id: count &default=0;\nqtype: count &default=0; qclass: count &default=0;\nlabels: vector of string &default=vector(); question: string &default=\"\";\nanswer: Decoded &default=[];\n};"
+        }
+      ],
+      "links": [
+        [
+          "question-identity",
+          "Construct the accepted wire result"
+        ],
+        [
+          "answer-result",
+          "Qualify assembled answer bytes"
+        ]
+      ]
+    },
+    {
+      "id": "dns-header",
+      "title": "Require one complete standard DNS question",
+      "description": "dnswire requires a 12 byte header and QDCOUNT equal to one. It reads flags at offset two, requires opcode zero, RCODE zero and TC clear. These checks admit a standard successful, complete DNS envelope before expanding names or walking records.",
+      "ranges": [
+        {
+          "code": "function dnswire(s: string): DNSWire\n{\nif (|s|<12 || u16(s,4)!=1) return [];\nlocal flags=u16(s,2);\nif ((flags/2048)%16!=0 || flags%16!=0 || (flags/512)%2!=0) return [];"
+        }
+      ],
+      "links": [
+        [
+          "dns-record-count",
+          "Bound section record counts"
+        ],
+        [
+          "dns-question",
+          "Read the single question"
+        ]
+      ]
+    },
+    {
+      "id": "dns-record-count",
+      "title": "Cap records across all three DNS sections",
+      "description": "an, ns and ar read answer, authority and additional record counts from offsets 6, 8 and 10. Their sum must fit max_dns_records, whose default is 16. The later loop visits this bounded total while answer extraction uses the answer section prefix only.",
+      "ranges": [
+        {
+          "code": "local an=u16(s,6); local ns=u16(s,8); local ar=u16(s,10);\nif (an+ns+ar>max_dns_records) return [];"
+        }
+      ],
+      "links": [
+        [
+          "answer-owner",
+          "Select actual answer section records"
+        ]
+      ]
+    },
+    {
+      "id": "dns-question",
+      "title": "Expand the question and require type and class bytes",
+      "description": "name begins at DNS offset 12. The parser requires a valid expanded name and four bytes after its original encoded end for QTYPE and QCLASS. This uses Name.end so compressed encoding and expanded identity remain separate.",
+      "ranges": [
+        {
+          "code": "local q=name(s,12); if (!q$ok || q$end+4>|s|) return [];"
+        }
+      ],
+      "links": [
+        [
+          "name-root",
+          "Read encoded end and expanded name"
+        ]
+      ]
+    },
+    {
+      "id": "dns-question-type",
+      "title": "Admit the seven iodine DNS question types",
+      "description": "qt and qc read the two byte type and class. Class must be IN, value 1. Supported types are A 1, CNAME 5, NULL 10, MX 15, TXT 16, SRV 33 and PRIVATE 65399. The actual answer type later selects the matching carrier wrapper, including CNAME for an A question.",
+      "ranges": [
+        {
+          "code": "local qt=u16(s,q$end); local qc=u16(s,q$end+2);\nif (qc!=1 || qt !in set(1,5,10,15,16,33,65399)) return [];"
+        }
+      ],
+      "links": [
+        [
+          "raw-carrier",
+          "Read NULL and PRIVATE bytes"
+        ],
+        [
+          "name-carrier",
+          "Select CNAME, MX and SRV wrappers"
+        ]
+      ]
+    },
+    {
+      "id": "dns-walk-state",
+      "title": "Initialize a bounded record walk and local pieces",
+      "description": "pos begins after QTYPE and QCLASS, and idx counts the declared records. parts, piececodec, valid and found are local to this datagram parse. The loop visits the bounded sum of all three sections, retaining decoded carrier pieces only for qualifying answer records.",
+      "ranges": [
+        {
+          "code": "local pos=q$end+4; local idx: count=0;\nlocal parts: table[count] of string=table(); local piececodec=\"\"; local valid=T; local found=F;\nwhile (idx<an+ns+ar) {"
+        }
+      ],
+      "links": [
+        [
+          "answer-owner",
+          "Apply the answer identity guard"
+        ]
+      ]
+    },
+    {
+      "id": "rr-header",
+      "title": "Bound each resource record header and RDATA",
+      "description": "The owner name must expand successfully and leave ten bytes for the fixed RR header. The parser reads type, class and RDLENGTH, advances over that header and requires all n RDATA bytes inside the message. Owner name pointers receive the same cycle, jump and expanded size guards as question names.",
+      "ranges": [
+        {
+          "code": "local owner=name(s,pos); if (!owner$ok || owner$end+10>|s|) return [];\npos=owner$end;\nlocal typ=u16(s,pos); local cls=u16(s,pos+2); local n=u16(s,pos+8); pos+=10;\nif (n>|s|-pos) return [];"
+        }
+      ],
+      "links": [
+        [
+          "name-pointer",
+          "Apply bounded owner compression parsing"
+        ]
+      ]
+    },
+    {
+      "id": "answer-owner",
+      "title": "Require answer section, IN class and exact owner",
+      "description": "idx<an selects the actual answer section. cls==1 requires IN and owner$raw==q$raw requires exact expanded question owner bytes, including label case and root. Only this branch attempts carrier decoding. Each candidate begins with invalid d and rank 10.",
+      "ranges": [
+        {
+          "code": "if (idx<an && cls==1 && owner$raw==q$raw) {\nlocal d: Decoded=[]; local rank: count=10;"
+        }
+      ],
+      "links": [
+        [
+          "name-root",
+          "Read expanded owner representation"
+        ],
+        [
+          "piece-rank",
+          "Validate admitted answer ranks"
+        ]
+      ]
+    },
+    {
+      "id": "raw-carrier",
+      "title": "Read raw bytes from NULL or PRIVATE answers",
+      "description": "A NULL question with NULL answer, or PRIVATE 65399 question with the same answer type, passes all n RDATA bytes to decode as Raw. The enclosing answer owner and class guard supplies the record identity.",
+      "ranges": [
+        {
+          "code": "if ((qt==10 || qt==65399) && typ==qt) d=decode(cut(s,pos,n),\"Raw\");"
+        }
+      ],
+      "links": [
+        [
+          "decode-raw",
+          "Preserve Raw bytes directly"
+        ]
+      ]
+    },
+    {
+      "id": "txt-carrier",
+      "title": "Join bounded TXT character strings and decode a marker",
+      "description": "A TXT question requires a TXT answer. The loop reads each one byte string length, advances j and requires that string to fit the remaining RDATA. It concatenates the exact string bytes in text, then marked(text,F) selects the text marker family and decodes the payload.",
+      "ranges": [
+        {
+          "code": "else if (qt==16 && typ==16) {\nlocal j: count=0; local text=\"\";\nwhile (j<n) { local z=oct(s,pos+j); ++j; if (z>n-j) return []; text+=cut(s,pos+j,z); j+=z; }\nd=marked(text,F);"
+        }
+      ],
+      "links": [
+        [
+          "text-markers",
+          "Read the text marker map"
+        ]
+      ]
+    },
+    {
+      "id": "name-carrier",
+      "title": "Select actual CNAME, MX or SRV target framing",
+      "description": "A or CNAME questions accept an actual CNAME answer. MX questions require MX answers and SRV questions require SRV answers. skip is zero for CNAME, two bytes for MX preference and six bytes for SRV priority, weight and port. RDATA must contain bytes after those fixed fields for its target name.",
+      "ranges": [
+        {
+          "code": "} else if (((qt==1 || qt==5) && typ==5) || (qt==15 && typ==15) || (qt==33 && typ==33)) {\nlocal skip: count=0;\nif (typ==15) skip=2; else if (typ==33) skip=6;\nif (n<=skip) return [];"
+        }
+      ],
+      "links": [
+        [
+          "name-carrier-rank",
+          "Read priority and target name"
+        ],
+        [
+          "dns-question-type",
+          "Read the admitted question types"
+        ]
+      ]
+    },
+    {
+      "id": "name-carrier-rank",
+      "title": "Read wrapper rank and validate the entire target name",
+      "description": "MX and SRV use their first two RDATA bytes as rank; CNAME retains rank 10. The target name starts after skip and must end exactly at pos+n. It must contain at least two labels with an exact two byte final label. Compression expansion uses the same bounded name parser.",
+      "ranges": [
+        {
+          "code": "if (skip>0) rank=u16(s,pos);\nlocal target=name(s,pos+skip);\nif (!target$ok || target$end!=pos+n || |target$labels|<2 || |target$labels[|target$labels|-1]|!=2) return [];"
+        }
+      ],
+      "links": [
+        [
+          "piece-rank",
+          "Validate rank spacing and uniqueness"
+        ],
+        [
+          "name-carrier-decode",
+          "Extract the marked target payload"
+        ]
+      ]
+    },
+    {
+      "id": "name-carrier-decode",
+      "title": "Join payload labels and apply hostname markers",
+      "description": "joinlabels concatenates every target label before the final two byte label with an empty separator. marked(...,T) reads the hostname codec marker and decodes the remaining symbols. The final label serves as a wrapper and stays outside the encoded payload.",
+      "ranges": [
+        {
+          "code": "d=marked(joinlabels(target$labels,0,|target$labels|-1,\"\"),T);\n}"
+        }
+      ],
+      "links": [
+        [
+          "hostname-markers",
+          "Map hostname codec markers"
+        ]
+      ]
+    },
+    {
+      "id": "piece-rank",
+      "title": "Validate answer piece ranks before assembly",
+      "description": "Only d$ok results contribute pieces. A rank of zero, a rank outside multiples of ten, a rank above ten times max_dns_records or a repeated rank sets valid=F. The data is stored by rank even on that path, and final answer qualification requires valid to remain true.",
+      "ranges": [
+        {
+          "code": "if (d$ok) {\nif (rank==0 || rank%10!=0 || rank/10>max_dns_records || rank in parts) valid=F;\nparts[rank]=d$data;"
+        }
+      ],
+      "links": [
+        [
+          "answer-result",
+          "Require contiguous ranks and validity"
+        ]
+      ]
+    },
+    {
+      "id": "piece-codec",
+      "title": "Require the same codec across decoded pieces",
+      "description": "Once a piece has been found, every later decoded piece must have the same codec as piececodec. A mismatch clears valid. The parser records the current codec and sets found, retaining only this datagram’s local piece table and codec state for assembly.",
+      "ranges": [
+        {
+          "code": "if (found && d$codec!=piececodec) valid=F;\npiececodec=d$codec; found=T;\n}\n}"
+        }
+      ],
+      "links": [
+        [
+          "decode-result",
+          "Read the exact decoder codec name"
+        ]
+      ]
+    },
+    {
+      "id": "rr-advance",
+      "title": "Advance over each declared RDATA region",
+      "description": "After carrier processing, pos advances by the declared RDATA length and idx advances by one. Authority and additional records receive structural traversal through this same loop; the answer section guard selects the records that contribute payload pieces.",
+      "ranges": [
+        {
+          "code": "pos+=n; ++idx;\n}"
+        }
+      ],
+      "links": [
+        [
+          "answer-owner",
+          "Read the section and owner selector"
+        ]
+      ]
+    },
+    {
+      "id": "dns-tail",
+      "title": "Require exact message consumption",
+      "description": "pos must equal the datagram length after every declared record has been traversed. Trailing bytes or an inconsistent section layout return an invalid DNSWire. The local answer starts as invalid before the assembly guard.",
+      "ranges": [
+        {
+          "code": "if (pos!=|s|) return [];\nlocal answer: Decoded=[];"
+        }
+      ],
+      "links": [
+        [
+          "answer-result",
+          "Qualify the decoded answer"
+        ]
+      ]
+    },
+    {
+      "id": "answer-result",
+      "title": "Assemble consecutive ranks beginning at ten",
+      "description": "Assembly requires at least one decoded piece and valid=T. Starting at rank 10, the loop concatenates pieces at 10, 20 and subsequent increments of ten. The final count check requires every stored piece to belong to that contiguous sequence. A successful result returns the combined bytes and shared codec.",
+      "ranges": [
+        {
+          "code": "if (found && valid) {\nlocal body=\"\"; local k: count=10;\nwhile (k in parts) { body+=parts[k]; k+=10; }\nif ((k/10)-1==|parts|) answer=[$ok=T,$data=body,$codec=piececodec];\n}"
+        }
+      ],
+      "links": [
+        [
+          "piece-rank",
+          "Read rank admission guards"
+        ],
+        [
+          "piece-codec",
+          "Read codec consistency guards"
+        ]
+      ]
+    },
+    {
+      "id": "question-identity",
+      "title": "Return exact expanded question identity and DNS role",
+      "description": "The result marks the envelope valid, derives reply from the DNS QR bit through flags>=32768 and returns the wire ID, type, class and expanded labels. question concatenates q$raw with the exact QTYPE and QCLASS bytes. This normalizes compression layout into an expanded length prefixed identity while preserving label bytes and case. The state module hashes this identity in pkey alongside peers, ports and DNS ID.",
+      "ranges": [
+        {
+          "code": "return [$ok=T,$reply=flags>=32768,$id=u16(s,0),$qtype=qt,$qclass=qc,$labels=q$labels,$question=q$raw+cut(s,q$end,4),$answer=answer];\n}"
+        }
+      ],
+      "links": [
+        [
+          "name-root",
+          "Trace expanded question bytes"
+        ],
+        [
+          "dns-record",
+          "Read the DNSWire fields"
+        ]
+      ]
+    },
+    {
+      "id": "zheader-minimum",
+      "title": "Require two header bytes and a bounded body minimum",
+      "description": "zheader receives header bytes s and a separate total body length. It requires at least two available bytes and length at least eight, then reads the two header octets. Fragment processing can pass its retained two byte prefix together with the summed fragment lengths.",
+      "ranges": [
+        {
+          "code": "function zheader(s: string, length: count): bool\n{\nif (|s|<2 || length<8) return F;\nlocal a=oct(s,0); local b=oct(s,1);"
+        }
+      ],
+      "links": [
+        [
+          "zheader-fields",
+          "Validate compressed framing fields"
+        ]
+      ]
+    },
+    {
+      "id": "zheader-fields",
+      "title": "Validate the zlib method, window and header checksum",
+      "description": "The first octet must select compression method 8 in its low nibble and a window size field through 7 in its high nibble. The combined two byte header must be divisible by 31 and the preset dictionary flag must be clear. These fixed header tests supply compressed framing evidence using the prefix and total length.",
+      "ranges": [
+        {
+          "code": "return a%16==8 && a/16<=7 && (a*256+b)%31==0 && (b/32)%2==0;\n}"
+        }
+      ],
+      "links": [
+        [
+          "zheader-minimum",
+          "Read the prefix and length inputs"
+        ]
+      ]
+    },
+    {
+      "id": "alphabet-init",
+      "title": "Complete Base128 before packet processing",
+      "description": "zeek_init at priority 20 appends byte values 188 through 253 inclusive using chr. Combined with the 62 initial letter and digit symbols, this forms the 128 symbol byte alphabet used by Base128 decoding. Priority 20 runs before the entry module’s priority 10 port initialization.",
+      "ranges": [
+        {
+          "code": "event zeek_init() &priority=20\n{ local i: count=188; while (i<=253) { b128+=chr(i); ++i; } }"
+        }
+      ],
+      "links": [
+        [
+          "base128-prefix",
+          "Read the initial alphabet bytes"
+        ],
+        [
+          "decode-codec",
+          "Select the seven bit codec"
+        ]
+      ]
+    }
+  ],
+  "notice": {}
+}

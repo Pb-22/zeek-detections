@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "path": "scripts/iodine/main.zeek",
+  "title": "iodine UDP entry",
+  "description": "Routes selected UDP datagrams into iodine Raw or DNS processing. Observed direction determines client and server arguments, a datagram cap bounds input, and decoded DNS query or reply roles select the state handler.",
+  "tags": [
+    "DNS",
+    "iodine",
+    "UDP",
+    "notice"
+  ],
+  "initialTopic": "selected-port-guard",
+  "topics": [
+    {
+      "id": "module-loads",
+      "title": "Load DNS and Notice support",
+      "description": "The two @load directives import the DNS scripts and Notice framework. module Iodine places the following declarations and handlers in the Iodine namespace.",
+      "ranges": [
+        {
+          "code": "@load base/protocols/dns\n@load base/frameworks/notice\nmodule Iodine;"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "notice-type",
+      "title": "Export the session finding type",
+      "description": "redef enum Notice::Type += adds CompatibleSession to the Notice enum inside export. The state module selects Iodine::CompatibleSession when its session evidence qualifies.",
+      "ranges": [
+        {
+          "code": "export {\nredef enum Notice::Type += { CompatibleSession };"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "selected-ports",
+      "title": "Select the observed UDP service ports",
+      "description": "ports is an exported set[port] with the typed default 53/udp. &redef allows local configuration to add observed service ports. The event handler admits traffic when either observed endpoint port belongs to this set.",
+      "ranges": [
+        {
+          "code": "const ports: set[port] = { 53/udp } &redef;\n}"
+        }
+      ],
+      "links": [
+        [
+          "selected-port-guard",
+          "Apply the selected port set"
+        ],
+        [
+          "content-init",
+          "Deliver contents for configured ports"
+        ]
+      ]
+    },
+    {
+      "id": "content-load",
+      "title": "Enable DNS port contents and load state",
+      "description": "redef adds 53/udp to udp_content_ports. @load ./state imports session processing and its wire helpers from the adjacent module. The selected port set also enters udp_content_ports during initialization.",
+      "ranges": [
+        {
+          "code": "redef udp_content_ports += { 53/udp };\n@load ./state"
+        }
+      ],
+      "links": [
+        [
+          "content-init",
+          "Add configured ports during initialization"
+        ]
+      ]
+    },
+    {
+      "id": "expiry-clock",
+      "title": "Run due expiry at a datagram callback",
+      "description": "next_expiry begins at time zero. Each udp_contents callback compares network_time() with that deadline, calls expire() when due, then advances the deadline by sweep_interval_seconds, whose default is 1secs. Expiry runs before endpoint and payload admission in this callback.",
+      "ranges": [
+        {
+          "code": "global next_expiry: time = double_to_time(0);\nevent udp_contents(c: connection, is_orig: bool, contents: string)\n{\nif (network_time()>=next_expiry) { expire(); next_expiry=network_time()+sweep_interval_seconds; }"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "observed-direction",
+      "title": "Orient endpoints to the current datagram",
+      "description": "Local address and port variables initially follow the connection originator toward its responder. When is_orig is false, assignments reverse both address and port pairs. src, dst, sport and dport therefore describe the actual datagram direction used by the following routing guards.",
+      "ranges": [
+        {
+          "code": "local src=c$id$orig_h; local dst=c$id$resp_h;\nlocal sport=c$id$orig_p; local dport=c$id$resp_p;\nif (!is_orig) { src=c$id$resp_h; dst=c$id$orig_h; sport=c$id$resp_p; dport=c$id$orig_p; }"
+        }
+      ],
+      "links": [
+        [
+          "dns-dispatch",
+          "Orient DNS state handler arguments"
+        ],
+        [
+          "raw-dispatch",
+          "Orient Raw state handler arguments"
+        ]
+      ]
+    },
+    {
+      "id": "selected-port-guard",
+      "title": "Admit selected service port traffic",
+      "description": "The membership guard returns when both observed endpoint ports fall outside ports. With the default set, a source or destination of 53/udp admits the datagram to payload inspection. udp_content_ports supplies contents for selected ports, and this guard limits the handler to the configured service set.",
+      "ranges": [
+        {
+          "code": "if (sport !in ports && dport !in ports) return;"
+        }
+      ],
+      "links": [
+        [
+          "selected-ports",
+          "Configure the service port set"
+        ],
+        [
+          "datagram-limit",
+          "Apply the payload size bound"
+        ]
+      ]
+    },
+    {
+      "id": "datagram-limit",
+      "title": "Bound the admitted UDP payload",
+      "description": "The handler compares the contents byte length with max_datagram_bytes, whose default is 8192. An oversized datagram increments rejected_large and returns before signature inspection or DNS parsing. This guard bounds the byte string passed into either decoder path.",
+      "ranges": [
+        {
+          "code": "if (|contents|>max_datagram_bytes) { ++rejected_large; return; }"
+        }
+      ],
+      "links": [
+        [
+          "raw-signature",
+          "Inspect the admitted prefix"
+        ]
+      ]
+    },
+    {
+      "id": "raw-signature",
+      "title": "Recognize the iodine Raw prefix",
+      "description": "cut(contents,0,3) selects the first three bytes using the wire helper’s zero based offset convention. The exact prefix `\\x10\\xd1\\x9e` selects Raw handling. Short input produces a different prefix through the bounded cut helper.",
+      "ranges": [
+        {
+          "code": "if (cut(contents,0,3)==\"\\x10\\xd1\\x9e\") {"
+        }
+      ],
+      "links": [
+        [
+          "raw-dispatch",
+          "Route the matching Raw datagram"
+        ]
+      ]
+    },
+    {
+      "id": "raw-dispatch",
+      "title": "Route Raw direction through the selected port",
+      "description": "A selected destination port calls rawpacket(src,dst,T,contents), identifying upstream traffic. Otherwise the selected source port calls rawpacket(dst,src,F,contents), restoring client and server argument order for downstream traffic. The branch returns after Raw handling. A datagram with both ports selected takes the destination branch.",
+      "ranges": [
+        {
+          "code": "if (dport in ports) rawpacket(src,dst,T,contents);\nelse rawpacket(dst,src,F,contents);\nreturn;\n}"
+        }
+      ],
+      "links": []
+    },
+    {
+      "id": "dns-decode",
+      "title": "Require an accepted DNS wire envelope",
+      "description": "dnswire(contents) returns the decoded DNS metadata. The ok guard returns immediately for an invalid envelope. Accepted metadata includes the DNS role, ID, question labels, exact question identity, type, class and decoded answer when available.",
+      "ranges": [
+        {
+          "code": "local d=dnswire(contents); if (!d$ok) return;"
+        }
+      ],
+      "links": [
+        [
+          "dns-dispatch",
+          "Route the accepted DNS role"
+        ]
+      ]
+    },
+    {
+      "id": "dns-dispatch",
+      "title": "Route DNS requests and replies by role and port",
+      "description": "A decoded reply requires the observed source port in ports and calls response(dst,src,dport,sport,d). A decoded query requires the observed destination port in ports and calls request(src,dst,sport,dport,d). Both calls present client, server, client port and server port in that order to the state module.",
+      "ranges": [
+        {
+          "code": "if (d$reply && sport in ports) response(dst,src,dport,sport,d);\nelse if (!d$reply && dport in ports) request(src,dst,sport,dport,d);\n}"
+        }
+      ],
+      "links": [
+        [
+          "observed-direction",
+          "Trace observed endpoint orientation"
+        ],
+        [
+          "dns-decode",
+          "Require accepted wire metadata"
+        ]
+      ]
+    },
+    {
+      "id": "content-init",
+      "title": "Deliver contents for configured ports",
+      "description": "zeek_init at priority 10 adds the complete ports set to udp_content_ports. The default delivers UDP contents for 53/udp; a redefined ports set extends the selected delivery ports. The wire module initializes its extended alphabet at priority 20 before this handler.",
+      "ranges": [
+        {
+          "code": "event zeek_init() &priority=10 { udp_content_ports += ports; }"
+        }
+      ],
+      "links": [
+        [
+          "selected-ports",
+          "Read the redefinable port set"
+        ]
+      ]
+    }
+  ],
+  "notice": {}
+}

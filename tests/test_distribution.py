@@ -26,7 +26,7 @@ class DistributionTests(unittest.TestCase):
                    'modbus-write-server-device-failure']
         self.assertEqual(loads, ['@load ./' + name for name in modules])
         self.assertEqual({p.name for p in (ROOT/'scripts').iterdir()},
-                         {'__load__.zeek', 'dnscat2'} | {name + '.zeek' for name in modules})
+                         {'__load__.zeek', 'dnscat2', 'iodine'} | {name + '.zeek' for name in modules})
         available = ROOT/'scripts/dnscat2'
         self.assertEqual({p.name for p in available.iterdir()}, {'main.zeek', 'cluster.zeek'})
         for name, digest in {
@@ -36,6 +36,14 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((available/name).read_bytes()).hexdigest(), digest)
         self.assertEqual(hashlib.sha256((ROOT/'scripts/pkinit-u2u.zeek').read_bytes()).hexdigest(),
                          '1e2a74def6eb7f630a2739b5eea1bab56aad17d8e0d916f4f7f5e085f7902126')
+        iodine = ROOT/'scripts/iodine'
+        self.assertEqual({p.name for p in iodine.iterdir()}, {'main.zeek', 'state.zeek', 'wire.zeek'})
+        for name, digest in {
+                'main.zeek': '04fa379f0e8ebbdc81c356b12cc97588788c63361c3814216eb265c5a4294144',
+                'state.zeek': 'fbc1b93cb66b2c5026ccaac8f3da69d98dd39275d3d1c7d9892daefac9f0e0ca',
+                'wire.zeek': '4f3e52174c598b7682f6eb7958656d861886195d4db6b0a55af831fc104f7f97',
+        }.items():
+            self.assertEqual(hashlib.sha256((iodine/name).read_bytes()).hexdigest(), digest)
         self.assertTrue((ROOT/'tests/fixtures/event-regressions.zeek').is_file())
         self.assertNotIn('regression_case', (ROOT/'scripts/__load__.zeek').read_text())
 

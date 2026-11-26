@@ -21,4 +21,10 @@ Release 1.1.0 copies four approved scripts and four compact constructed captures
 
 The original source READMEs record standalone acceptance on Zeek 8.0.11 and 9.0.1, including the protocol boundary matrix. This release adds collection and installed loader acceptance on 9.0.0 and 9.0.1. All original captures and source manifests remain in Network_Detections. The four approved reader copies make this package's offline integration tests self contained. Earlier release tags preserve the PKINIT only collection.
 
+## iodine session module
+
+The iodine module preserves the reviewed three file Zeek implementation under `scripts/iodine/`. Its wire framing reference is the ISC licensed [iodine source at commit 7160bbe1c98c74bf34a8b97ed8c1540950ebb243](https://github.com/yarrick/iodine/tree/7160bbe1c98c74bf34a8b97ed8c1540950ebb243). Native captures came from controlled iodine sessions. The selected captures and derived control transformations are recorded in [Network_Detections/iodine](https://github.com/Pb-22/Network_Detections/tree/f06a5004bbb529d4444ef1105238f9aed8f10577/iodine).
+
+`main.zeek`, `state.zeek` and `wire.zeek` retain their accepted SHA256 values in the capture validation record and this repository's checksum manifest. Repository publication keeps the source logic and current publisher loader unchanged. [The iodine guide](docs/iodine.md) distinguishes standalone source availability, the selected capture tests and observation requirements.
+
 BSD-3-Clause applies to this repository's authored code and documentation. Packet identities and authentication material are controlled lab evidence, not reusable credentials. External standards and vendor documentation retain their own rights.
