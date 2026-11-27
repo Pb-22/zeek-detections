@@ -4,6 +4,10 @@
 
 These files supply the interactive explanations on [zeek.brimerica.com](https://zeek.brimerica.com). The website retrieves a script and its notes from the same repository commit.
 
+## Author connections between files
+
+Use the [worked caller and helper pair and authoring checklist](FAMILIES.md#author-the-connection-at-its-source). A caller topic links to a stable destination topic through its path, topic and label. The website derives the destination title and current source lines. Keep those generated display fields out of authored notes, and give each helper granular explanations with onward relationships where needed.
+
 ## Keep notes beside the source
 
 ```text
