@@ -22,9 +22,16 @@
         {
           "repository": "Pb-22/Network_Detections",
           "path": "dnscat2/pcap/dnscat2-txt-positive-complete-session.pcap",
-          "label": "Native TXT session with documented endpoint replacement",
+          "label": "Complete TXT session",
           "expected_notices": 1,
           "provenance": "Derived from a native lab capture; outer endpoint addresses replaced"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "dnscat2/pcap/dnscat2-negative-inconsistent-reply-session-ids.pcap",
+          "label": "Inconsistent reply session IDs",
+          "expected_notices": 0,
+          "provenance": "Derived negative control with documented endpoint replacement"
         }
       ],
       "capture_guide": {
