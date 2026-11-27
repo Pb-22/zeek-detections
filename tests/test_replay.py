@@ -124,7 +124,7 @@ class RunnerTests(unittest.TestCase):
 
 class PackageIntegrityTests(unittest.TestCase):
     def test_exact_public_allowlist(self):
-        expected = {'README.md', 'PACKET-GUIDE.md', 'DETECTOR-GUIDE.md', 'cases.json',
+        expected = {'README.md', 'PCAP-FIRST.md', 'PACKET-GUIDE.md', 'DETECTOR-GUIDE.md', 'cases.json',
                     'validation.json', 'validation-9.0.1.json', 'COMPATIBILITY.md',
                     'SHA256SUMS', 'replay.py', 'tests/test_replay.py', 'tests/test_notice_sub.py',
                     'scripts/pkinit-u2u.zeek', 'tests/fixtures/event-regressions.zeek',
