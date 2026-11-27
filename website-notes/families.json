@@ -218,7 +218,7 @@
       "id": "pkinit-u2u",
       "entry": "scripts/pkinit-u2u.zeek",
       "title": "PKINIT followed by linked U2U issuance",
-      "description": "Correlates certificate-associated Kerberos AS issuance with a self-targeted U2U request using the same ticket fingerprint. A timely response matching the original account and requested service raises a notice. Related flows must reach the same Zeek worker.",
+      "description": "Correlates successful PKINIT with U2U issuance for the same account, using the original ticket fingerprint. Related flows must reach the same Zeek worker.",
       "files": [
         {
           "path": "scripts/pkinit-u2u.zeek",
