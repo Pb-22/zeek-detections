@@ -1,5 +1,7 @@
 # Website notes
 
+[Detector families and packet tests](FAMILIES.md) describe file roles, links between helper callouts, source downloads and PCAP as the first consumer test. The notes remain separate from executable scripts and do not change the loader or package version.
+
 These files supply the interactive explanations on [zeek.brimerica.com](https://zeek.brimerica.com). The website retrieves a script and its notes from the same repository commit.
 
 ## Keep notes beside the source

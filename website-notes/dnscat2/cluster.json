@@ -29,7 +29,12 @@
         [
           "shared-pair",
           "Invoke the shared main lifecycle"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "local-dispatch",
+          "label": "Load the standalone lifecycle used by finite PCAP owners"
+        }
       ]
     },
     {
@@ -265,7 +270,12 @@
         [
           "source-clock",
           "Supply source time to the shared lifecycle"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -505,7 +515,12 @@
         [
           "contiguous-stream",
           "Verify complete stream coverage"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -525,7 +540,12 @@
         [
           "reduction-dedup",
           "Deduplicate the sorted facts"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "frame-metadata",
+          "label": "Read the core frame metadata and validity defaults"
+        }
       ]
     },
     {
@@ -565,7 +585,12 @@
         [
           "source-clock",
           "Apply this time during reduction"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -585,7 +610,12 @@
         [
           "transport-duplicate",
           "Compare repeated sequence content"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -605,7 +635,12 @@
         [
           "hrw-route",
           "Select the stable owner"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -621,7 +656,17 @@
         [
           "worker-unbound",
           "Buffer metadata with cleared worker bindings"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "frame-metadata",
+          "label": "Read the core frame metadata and validity defaults"
+        },
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -681,7 +726,17 @@
         [
           "shared-pair",
           "Use the preserved completing source timestamp"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "local-dispatch",
+          "label": "Follow the standalone dispatch function this adapter replaces"
+        },
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "lifecycle-clock",
+          "label": "Read the core clock hook this adapter supplies"
+        }
       ]
     },
     {
@@ -949,7 +1004,12 @@
         [
           "pair-consistency",
           "Require the pair’s original query metadata"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "observation-identity",
+          "label": "Read the core transaction observation fields"
+        }
       ]
     },
     {
@@ -1061,7 +1121,12 @@
         [
           "key-builder",
           "Recompute the typed metadata key"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "decode-settings",
+          "label": "Use the core decoded frame size limit"
+        }
       ]
     },
     {
@@ -1097,7 +1162,12 @@
         [
           "pair-consistency",
           "Match the pair to its original query"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "decode-settings",
+          "label": "Use the core decoded frame size limit"
+        }
       ]
     },
     {
@@ -1609,7 +1679,12 @@
         [
           "shared-pair",
           "Reuse that original binding for the paired reply"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "local-dispatch",
+          "label": "Reduce the observation through the shared lifecycle"
+        }
       ]
     },
     {
@@ -1633,7 +1708,12 @@
         [
           "notice-filter",
           "Forward the shared standard Notice output"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "local-dispatch",
+          "label": "Reduce the observation through the shared lifecycle"
+        }
       ]
     },
     {
@@ -1701,7 +1781,12 @@
         [
           "shared-pair",
           "Locate the shared emitter call path"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "notice-record",
+          "label": "Forward the core session Notice after finite PCAP reduction"
+        }
       ]
     },
     {
@@ -1815,7 +1900,12 @@
         [
           "shared-pair",
           "Trace the paired call into the shared main emitter"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "local-dispatch",
+          "label": "Reduce the committed finite PCAP window through the core lifecycle"
+        }
       ]
     },
     {
@@ -1849,7 +1939,17 @@
         [
           "shared-pair",
           "Apply the retained original query binding"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "admission-expiry",
+          "label": "Assign the owner query binding through core admission"
+        },
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "topic": "epoch-guard",
+          "label": "Check the restored original query generation before paired updates"
+        }
       ]
     }
   ],

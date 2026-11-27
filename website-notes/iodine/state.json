@@ -21,7 +21,13 @@
           "code": "@load ./wire\nmodule Iodine;"
         }
       ],
-      "links": []
+      "links": [
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "dns-header",
+          "label": "Follow DNS decoding in the required wire helper"
+        }
+      ]
     },
     {
       "id": "fragment-slots",
@@ -355,7 +361,12 @@
         [
           "sweep",
           "Run the scheduled expiry sweep"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "state-lifetimes",
+          "label": "Read the pending transaction lifetime"
+        }
       ]
     },
     {
@@ -375,7 +386,12 @@
         [
           "assigned-generation",
           "Refresh age on accepted VACK"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "state-lifetimes",
+          "label": "Read the version candidate lifetime"
+        }
       ]
     },
     {
@@ -395,7 +411,12 @@
         [
           "notice-once",
           "Mark emitted session state"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "state-lifetimes",
+          "label": "Read the session idle lifetime"
+        }
       ]
     },
     {
@@ -415,7 +436,12 @@
         [
           "pending-remove-links",
           "Unlink the selected unprotected head"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "pool-budgets",
+          "label": "Read the pending transaction capacity"
+        }
       ]
     },
     {
@@ -455,7 +481,12 @@
         [
           "session-admit",
           "Promote an assigned candidate"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "pool-budgets",
+          "label": "Read the version candidate capacity"
+        }
       ]
     },
     {
@@ -515,7 +546,12 @@
         [
           "version-candidate",
           "Key version candidates by exact question fingerprint"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "dns-record",
+          "label": "Read the decoded question and answer fields"
+        }
       ]
     },
     {
@@ -551,7 +587,12 @@
         [
           "login-candidate",
           "Resolve login against assigned candidates"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "join-labels",
+          "label": "Match the suffix and concatenate the preceding command labels"
+        }
       ]
     },
     {
@@ -607,7 +648,12 @@
         [
           "fragment-slots",
           "Read retained fragment metadata"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "fragment-sweep-settings",
+          "label": "Read the fragment slot budget shared by both directions"
+        }
       ]
     },
     {
@@ -643,7 +689,12 @@
         [
           "fragment-reassemble",
           "Reconstruct only length and header bytes"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Retain at most two leading fragment bytes with cut"
+        }
       ]
     },
     {
@@ -679,7 +730,12 @@
         [
           "fragment-qualify",
           "Require an exact final slot count"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Copy the remaining header prefix bytes with cut"
+        }
       ]
     },
     {
@@ -699,7 +755,12 @@
         [
           "ack",
           "Bind the peer ACK to this completed packet"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "zheader-minimum",
+          "label": "Qualify the assembled fragment header and total length"
+        }
       ]
     },
     {
@@ -783,7 +844,12 @@
         [
           "notice-once",
           "Retain the emission flag"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/main.zeek",
+          "topic": "notice-type",
+          "label": "Read the exported Iodine Notice type"
+        }
       ]
     },
     {
@@ -823,7 +889,17 @@
         [
           "command-normalize",
           "Normalize data only after scanning peers"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Read the command byte with bounded cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "dns-record",
+          "label": "Read the decoded question and answer fields"
+        }
       ]
     },
     {
@@ -843,7 +919,22 @@
         [
           "version-candidate",
           "Admit the version observation"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the encoded version and decoded version word with cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decode-raw",
+          "label": "Decode the version payload with the Base32 codec"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "join-labels",
+          "label": "Join the remaining version query labels into its suffix"
+        }
       ]
     },
     {
@@ -883,7 +974,12 @@
         [
           "session-user",
           "Decode a user while preserving the wire command"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decoded-record",
+          "label": "Read the codec result and its failure defaults"
+        }
       ]
     },
     {
@@ -903,7 +999,27 @@
         [
           "session-key",
           "Read the session identity"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the encoded command payload or user symbol with cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read the decoded user byte with oct"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "base32-value",
+          "label": "Decode the command user symbol with b32val"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decode-raw",
+          "label": "Decode the command payload to find its assigned user"
+        }
       ]
     },
     {
@@ -943,7 +1059,22 @@
         [
           "assigned-generation",
           "Read the VACK assignment"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the candidate login payload with cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read the candidate login user byte with oct"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decode-raw",
+          "label": "Decode the candidate login payload with Base32"
+        }
       ]
     },
     {
@@ -963,7 +1094,12 @@
         [
           "candidate-remove-links",
           "Unlink the promoted candidate"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "pool-budgets",
+          "label": "Read the retained session capacity"
+        }
       ]
     },
     {
@@ -983,7 +1119,22 @@
         [
           "login-response",
           "Store the accepted reply metadata"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the login payload before validating its user"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read the login user byte with oct"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decode-raw",
+          "label": "Decode the login payload for the retained session"
+        }
       ]
     },
     {
@@ -1007,7 +1158,12 @@
         [
           "pending-admit",
           "Preserve protected pending entries under pressure"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Retain the codec switch symbol with cut"
+        }
       ]
     },
     {
@@ -1023,7 +1179,22 @@
         [
           "up-data",
           "Apply the upstream header bits"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the upstream header symbols and encoded body with cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "base32-value",
+          "label": "Decode upstream sequence and fragment header symbols"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decode-raw",
+          "label": "Decode upstream data with the negotiated codec"
+        }
       ]
     },
     {
@@ -1063,7 +1234,22 @@
         [
           "notice-guard",
           "Require both ACK bound directions"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the encoded ping payload with cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read the ping user and acknowledgement byte with oct"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "decode-raw",
+          "label": "Decode the compact ping acknowledgement with Base32"
+        }
       ]
     },
     {
@@ -1087,7 +1273,12 @@
         [
           "epoch-guard",
           "Check the stored session epoch"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "dns-record",
+          "label": "Read the decoded question and answer fields"
+        }
       ]
     },
     {
@@ -1107,7 +1298,17 @@
         [
           "new-version-reset",
           "Reset an existing session for a newer version"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Read the VACK prefix with bounded cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read the assigned VACK user byte with oct"
+        }
       ]
     },
     {
@@ -1203,7 +1404,12 @@
         [
           "raw-association",
           "Associate a raw packet with exactly one session"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the reply marker and advertised IPv4 bytes with cut"
+        }
       ]
     },
     {
@@ -1223,7 +1429,12 @@
         [
           "up-data-decode",
           "Decode later data with the selected upstream codec"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "base32-value",
+          "label": "Map the upstream codec option through b32val"
+        }
       ]
     },
     {
@@ -1267,7 +1478,17 @@
         [
           "notice-guard",
           "Evaluate both packet directions"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the downstream body after its two header bytes"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read downstream acknowledgement and fragment header bytes with oct"
+        }
       ]
     },
     {
@@ -1283,7 +1504,17 @@
         [
           "raw-association",
           "Select the unique observed session"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Read the Raw signature with bounded cut"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "oct",
+          "label": "Read the Raw user and command nibbles with oct"
+        }
       ]
     },
     {
@@ -1303,7 +1534,12 @@
         [
           "raw-login",
           "Pair the challenge fingerprints"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Slice the Raw body after its four header bytes"
+        }
       ]
     },
     {
@@ -1343,7 +1579,12 @@
         [
           "notice-values",
           "Select raw Notice values"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "zheader-minimum",
+          "label": "Qualify the Raw compressed body header and length"
+        }
       ]
     },
     {
@@ -1439,7 +1680,12 @@
         [
           "session-invalidate",
           "Inspect the session invalidation scan"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "fragment-sweep-settings",
+          "label": "Read the shared cleanup interval"
+        }
       ]
     },
     {

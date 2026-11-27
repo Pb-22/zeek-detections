@@ -7,6 +7,10 @@ The detector correlates paired dnscat2 negotiation and session start messages wi
 | Main | [main.zeek](../scripts/dnscat2/main.zeek) | [main.json](../website-notes/dnscat2/main.json) | Evaluates DNS observations incrementally. |
 | Optional finite PCAP adapter | [cluster.zeek](../scripts/dnscat2/cluster.zeek) | [cluster.json](../website-notes/dnscat2/cluster.json) | Collects assigned finite inputs, validates closure and commits a source ordered batch through the shared main lifecycle. |
 
+## Try a PCAP first
+
+Download the [TXT session capture](https://raw.githubusercontent.com/Pb-22/Network_Detections/main/dnscat2/pcap/dnscat2-txt-positive-complete-session.pcap). With the main script on stock Zeek 9.0.1 it produces one `DNScat2::CompatibleSession` Notice. The [capture guide](https://github.com/Pb-22/Network_Detections/tree/main/dnscat2) lists the other carriers, the negative control and exact provenance. These files derive from native lab traffic with documented replacement of outer endpoint addresses. No generator is required to download or replay them.
+
 ## Select an execution mode
 
 From the repository root, select main explicitly for a capture:

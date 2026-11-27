@@ -1,5 +1,9 @@
 # Detector guide
 
+## Try a PCAP first
+
+Download the [linked PKINIT/U2U exchange](https://raw.githubusercontent.com/Pb-22/Network_Detections/main/Certipy/PKINIT-U2U/pcap/positive-pkinit-u2u.pcap). It is a native lab capture and produces one `PKINIT_U2U::Self_Targeted_Ticket` Notice with this detector on Zeek 9.0.1. The [PCAP guide](PCAP-FIRST.md) gives a direct Zeek command and the [packet guide](PACKET-GUIDE.md) explains the positive and negative cases. No Python generator is required for that first test.
+
 ## Analytic contract
 
 `scripts/pkinit-u2u.zeek` emits `PKINIT_U2U::Self_Targeted_Ticket` through the Notice framework after the following observed chain. Under the normal notice policy it is logged in `notice.log`; the detector creates no custom log stream.

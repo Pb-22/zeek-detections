@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "families": [
+    {
+      "id": "dnscat2",
+      "entry": "scripts/dnscat2/main.zeek",
+      "title": "dnscat2 DNS session",
+      "description": "Correlates actual TXT, CNAME, MX, A and AAAA DNS answers with retained requests. Distinct paired negotiation keys, paired SYN and MSG stages, matching session IDs and generation guards qualify the pattern. Standalone processing is incremental; the optional finite adapter invokes the same lifecycle after a complete assigned input window.",
+      "files": [
+        {
+          "path": "scripts/dnscat2/main.zeek",
+          "label": "Detection",
+          "role": "entry"
+        },
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "label": "Finite PCAP adapter",
+          "role": "optional"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "dnscat2/pcap/dnscat2-txt-positive-complete-session.pcap",
+          "label": "Native TXT session with documented endpoint replacement",
+          "expected_notices": 1,
+          "provenance": "Derived from a native lab capture; outer endpoint addresses replaced"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "dnscat2/README.md"
+      }
+    },
+    {
+      "id": "iodine",
+      "entry": "scripts/iodine/main.zeek",
+      "title": "iodine session",
+      "description": "Tracks version candidates, assigned user generations, exact DNS request and reply bindings, codec negotiation and bounded two way packet evidence. Completed DNS packets with matching ACKs or uniquely associated raw traffic qualify one CompatibleSession Notice per retained generation.",
+      "files": [
+        {
+          "path": "scripts/iodine/main.zeek",
+          "label": "UDP entry",
+          "role": "entry"
+        },
+        {
+          "path": "scripts/iodine/state.zeek",
+          "label": "Session evidence",
+          "role": "required"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "label": "Wire decoding",
+          "role": "required"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "iodine/pcap/iodine-dns-positive-complete-session.pcap",
+          "label": "Primary test PCAP",
+          "expected_notices": 1,
+          "provenance": "Native lab capture"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "iodine/pcap/iodine-dns-negative-negotiation-only.pcap",
+          "label": "Control PCAP",
+          "expected_notices": 0,
+          "provenance": "Derived control"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "iodine/README.md"
+      }
+    },
+    {
+      "id": "modbus-write-illegal-data-address",
+      "entry": "scripts/modbus-write-illegal-data-address.zeek",
+      "title": "Modbus write rejected: illegal data address",
+      "description": "Reports a parsed Modbus responder rejecting FC06 or FC16 with Illegal Data Address (02). The guard requires protocol ID zero, MBAP length three and raw exception function 0x86 or 0x90. Each matching response writes a standard notice with connection, transaction and unit context.",
+      "files": [
+        {
+          "path": "scripts/modbus-write-illegal-data-address.zeek",
+          "label": "Detection",
+          "role": "entry"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/Register_Write_Illegal_Data_Address__combined_positive_negative__expected_2_notices.pcap",
+          "label": "Primary test PCAP",
+          "expected_notices": 2,
+          "provenance": "Synthetic test traffic"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/normal_poll.pcap",
+          "label": "Control PCAP",
+          "expected_notices": 0,
+          "provenance": "Synthetic test traffic"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "modbus/write errors/README.md"
+      }
+    },
+    {
+      "id": "modbus-write-illegal-data-value",
+      "entry": "scripts/modbus-write-illegal-data-value.zeek",
+      "title": "Modbus write rejected: illegal data value",
+      "description": "Reports a parsed Modbus responder rejecting FC06 or FC16 with Illegal Data Value (03). The guard requires protocol ID zero, MBAP length three and raw exception function 0x86 or 0x90. Each matching response writes a standard notice with connection, transaction and unit context.",
+      "files": [
+        {
+          "path": "scripts/modbus-write-illegal-data-value.zeek",
+          "label": "Detection",
+          "role": "entry"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/Register_Write_Illegal_Data_Value__combined_positive_negative__expected_2_notices.pcap",
+          "label": "Primary test PCAP",
+          "expected_notices": 2,
+          "provenance": "Synthetic test traffic"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/normal_poll.pcap",
+          "label": "Control PCAP",
+          "expected_notices": 0,
+          "provenance": "Synthetic test traffic"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "modbus/write errors/README.md"
+      }
+    },
+    {
+      "id": "modbus-write-illegal-function",
+      "entry": "scripts/modbus-write-illegal-function.zeek",
+      "title": "Modbus write rejected: illegal function",
+      "description": "Reports a parsed Modbus responder rejecting FC06 or FC16 with Illegal Function (01). The guard requires protocol ID zero, MBAP length three and raw exception function 0x86 or 0x90. Each matching response writes a standard notice with connection, transaction and unit context.",
+      "files": [
+        {
+          "path": "scripts/modbus-write-illegal-function.zeek",
+          "label": "Detection",
+          "role": "entry"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/Register_Write_Illegal_Function__combined_positive_negative__expected_2_notices.pcap",
+          "label": "Primary test PCAP",
+          "expected_notices": 2,
+          "provenance": "Synthetic test traffic"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/normal_poll.pcap",
+          "label": "Control PCAP",
+          "expected_notices": 0,
+          "provenance": "Synthetic test traffic"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "modbus/write errors/README.md"
+      }
+    },
+    {
+      "id": "modbus-write-server-device-failure",
+      "entry": "scripts/modbus-write-server-device-failure.zeek",
+      "title": "Modbus write rejected: server device failure",
+      "description": "Reports a parsed Modbus responder rejecting FC06 or FC16 with Server Device Failure (04). The guard requires protocol ID zero, MBAP length three and raw exception function 0x86 or 0x90. Each matching response writes a standard notice with connection, transaction and unit context.",
+      "files": [
+        {
+          "path": "scripts/modbus-write-server-device-failure.zeek",
+          "label": "Detection",
+          "role": "entry"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/Register_Write_Server_Device_Failure__combined_positive_negative__expected_2_notices.pcap",
+          "label": "Primary test PCAP",
+          "expected_notices": 2,
+          "provenance": "Synthetic test traffic"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "modbus/write errors/pcap/normal_poll.pcap",
+          "label": "Control PCAP",
+          "expected_notices": 0,
+          "provenance": "Synthetic test traffic"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "modbus/write errors/README.md"
+      }
+    },
+    {
+      "id": "pkinit-u2u",
+      "entry": "scripts/pkinit-u2u.zeek",
+      "title": "PKINIT followed by linked U2U issuance",
+      "description": "Correlates certificate-associated Kerberos AS issuance with a self-targeted U2U request using the same ticket fingerprint. A timely response matching the original account and requested service raises a notice. Related flows must reach the same Zeek worker.",
+      "files": [
+        {
+          "path": "scripts/pkinit-u2u.zeek",
+          "label": "Detection",
+          "role": "entry"
+        }
+      ],
+      "captures": [
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "Certipy/PKINIT-U2U/pcap/positive-pkinit-u2u.pcap",
+          "label": "Primary test PCAP",
+          "expected_notices": 1,
+          "provenance": "Native lab capture"
+        },
+        {
+          "repository": "Pb-22/Network_Detections",
+          "path": "Certipy/PKINIT-U2U/pcap/negative-pkinit-no-hash.pcap",
+          "label": "Control PCAP",
+          "expected_notices": 0,
+          "provenance": "Native lab capture"
+        }
+      ],
+      "capture_guide": {
+        "repository": "Pb-22/Network_Detections",
+        "path": "Certipy/PKINIT-U2U/PACKET-GUIDE.md"
+      }
+    }
+  ]
+}

@@ -2,6 +2,10 @@
 
 Four scripts report Modbus responder exceptions for FC06, Write Single Register, and FC16, Write Multiple Registers. FC16 is decimal 16 (`0x10`). The package loader enables all four beside PKINIT/U2U.
 
+## Try a PCAP first
+
+Choose a [ready capture](PCAP-FIRST.md) for the rejection reason you want to test. Each named combined case produces two matching Notices with its script alone; normal_poll.pcap produces none. The direct Zeek commands are below. Generators and regression runners are optional reproduction tools, not the first consumer step.
+
 ## Reasons and notice types
 
 | Reason | Official name | Notice type |

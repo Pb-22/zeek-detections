@@ -2,6 +2,10 @@
 
 Zeek detection scripts with an explicit publisher-selected loader, versioned releases, packet evidence and offline regression tests.
 
+## Try a PCAP first
+
+Download a [ready test capture](PCAP-FIRST.md) before using the optional generators or regression runners. The guide lists a primary PCAP and expected Notice count for every detector. Captures can be inspected in Wireshark or replayed directly with Zeek; Python is not required for that first test.
+
 ## Enabled detections
 
 | Module | Behavior | Tested engine |

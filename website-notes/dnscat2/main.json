@@ -204,7 +204,12 @@
         [
           "dispatch-default",
           "Select the standalone default"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "worker-dispatch",
+          "label": "Collect worker observations with the optional finite PCAP adapter"
+        }
       ]
     },
     {
@@ -224,7 +229,12 @@
         [
           "promotion-pressure",
           "Compare retained tombstone times"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "source-clock",
+          "label": "Supply sorted source time with the optional finite PCAP owner"
+        }
       ]
     },
     {
@@ -492,7 +502,12 @@
         [
           "admission-expiry",
           "Check lifecycle age at admission"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "source-clock",
+          "label": "Use sorted source time during finite PCAP owner expiry"
+        }
       ]
     },
     {
@@ -776,7 +791,12 @@
         [
           "notice-dedup",
           "Retain completion within the bounded state"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "source-clock",
+          "label": "Use the finite PCAP owner clock when selecting retained state"
+        }
       ]
     },
     {
@@ -1132,7 +1152,12 @@
         [
           "lifecycle-clock",
           "Select the lifecycle time provider"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "worker-dispatch",
+          "label": "Follow the optional finite PCAP worker dispatch replacement"
+        }
       ]
     },
     {
@@ -1212,7 +1237,12 @@
         [
           "epoch-guard",
           "Validate the retained request binding"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "worker-dispatch",
+          "label": "Buffer the paired observation in the optional finite PCAP adapter"
+        }
       ]
     },
     {
@@ -1552,7 +1582,12 @@
         [
           "pending-priority",
           "Capture the selected priority"
-        ]
+        ],
+        {
+          "path": "scripts/dnscat2/cluster.zeek",
+          "topic": "worker-dispatch",
+          "label": "Buffer the query and retain native pairing in finite PCAP mode"
+        }
       ]
     },
     {

@@ -66,7 +66,12 @@
         [
           "content-init",
           "Add configured ports during initialization"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/state.zeek",
+          "topic": "request-start",
+          "label": "Follow query admission in the required state helper"
+        }
       ]
     },
     {
@@ -78,7 +83,18 @@
           "code": "global next_expiry: time = double_to_time(0);\nevent udp_contents(c: connection, is_orig: bool, contents: string)\n{\nif (network_time()>=next_expiry) { expire(); next_expiry=network_time()+sweep_interval_seconds; }"
         }
       ],
-      "links": []
+      "links": [
+        {
+          "path": "scripts/iodine/state.zeek",
+          "topic": "pending-expiry",
+          "label": "Expire retained candidates, transactions and sessions"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "fragment-sweep-settings",
+          "label": "Read the shared cleanup interval"
+        }
+      ]
     },
     {
       "id": "observed-direction",
@@ -133,7 +149,17 @@
         [
           "raw-signature",
           "Inspect the admitted prefix"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/state.zeek",
+          "topic": "health-counters",
+          "label": "Count rejected datagrams in shared health state"
+        },
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "datagram-budget",
+          "label": "Read the configured UDP payload limit"
+        }
       ]
     },
     {
@@ -149,7 +175,12 @@
         [
           "raw-dispatch",
           "Route the matching Raw datagram"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "cut",
+          "label": "Read the first three bytes with bounded cut"
+        }
       ]
     },
     {
@@ -161,7 +192,13 @@
           "code": "if (dport in ports) rawpacket(src,dst,T,contents);\nelse rawpacket(dst,src,F,contents);\nreturn;\n}"
         }
       ],
-      "links": []
+      "links": [
+        {
+          "path": "scripts/iodine/state.zeek",
+          "topic": "raw-header",
+          "label": "Associate Raw traffic with its negotiated session"
+        }
+      ]
     },
     {
       "id": "dns-decode",
@@ -176,7 +213,12 @@
         [
           "dns-dispatch",
           "Route the accepted DNS role"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "dns-header",
+          "label": "Decode the UDP payload into DNS question and answer metadata"
+        }
       ]
     },
     {
@@ -196,7 +238,17 @@
         [
           "dns-decode",
           "Require accepted wire metadata"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/state.zeek",
+          "topic": "request-start",
+          "label": "Admit the decoded query into session state"
+        },
+        {
+          "path": "scripts/iodine/state.zeek",
+          "topic": "response-consume",
+          "label": "Match the decoded reply to its pending request"
+        }
       ]
     },
     {
@@ -212,7 +264,12 @@
         [
           "selected-ports",
           "Read the redefinable port set"
-        ]
+        ],
+        {
+          "path": "scripts/iodine/wire.zeek",
+          "topic": "alphabet-init",
+          "label": "Initialize the Base128 alphabet before enabling configured ports"
+        }
       ]
     }
   ],

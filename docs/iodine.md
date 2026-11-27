@@ -2,6 +2,10 @@
 
 The iodine module correlates version negotiation, an assigned userid, login configuration, and tunnel data in both directions. Matching fragment and ACK evidence qualifies DNS sessions. The Raw UDP path follows an accepted DNS session into its advertised peer and requires a paired Raw login and compressed traffic in both directions. The result is `Iodine::CompatibleSession` in Zeek's standard Notice stream.
 
+## Try a PCAP first
+
+Download the [complete DNS session](https://raw.githubusercontent.com/Pb-22/Network_Detections/main/iodine/pcap/iodine-dns-positive-complete-session.pcap). It produces one `Iodine::CompatibleSession` Notice with the main script on stock Zeek 9.0.1. This is a native lab capture. The replay command and comparison controls are below; no Python generator is required for the first test.
+
 ## Source and selection
 
 | File | Role | Reader notes |
